@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RunCatDashboard.App/RunCatDashboard.App.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RunCatDashboard.Tests/RunCatDashboard.Tests.csproj" />
+  </Folder>
+</Solution>
