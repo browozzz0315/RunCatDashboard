@@ -5,11 +5,89 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="RunCatDashboard"
-        Height="450"
-        Width="800">
-    <Grid>
-        <TextBlock HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   Text="{Binding StatusMessage}" />
-    </Grid>
+        Height="430"
+        Width="620"
+        MinHeight="360"
+        MinWidth="520">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Grid Margin="24">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock FontSize="24"
+                       FontWeight="SemiBold"
+                       Text="System Metrics Dashboard" />
+
+            <Grid Grid.Row="1" Margin="0,20,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="24" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Text="CPU" />
+                <TextBlock Grid.Row="0" Grid.Column="2"
+                           FontWeight="SemiBold"
+                           Text="{Binding CpuUsageText}" />
+
+                <TextBlock Grid.Row="1" Margin="0,10,0,0" Text="Memory" />
+                <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,10,0,0"
+                           FontWeight="SemiBold"
+                           Text="{Binding MemoryUsageText}" />
+
+                <TextBlock Grid.Row="2" Margin="0,10,0,0" Text="Used / Total Memory" />
+                <TextBlock Grid.Row="2" Grid.Column="2" Margin="0,10,0,0"
+                           Text="{Binding UsedAndTotalMemoryText}" />
+
+                <TextBlock Grid.Row="3" Margin="0,10,0,0" Text="Last updated" />
+                <TextBlock Grid.Row="3" Grid.Column="2" Margin="0,10,0,0"
+                           Text="{Binding LastUpdatedText}" />
+
+                <TextBlock Grid.Row="4" Margin="0,10,0,0" Text="Status" />
+                <StackPanel Grid.Row="4" Grid.Column="2" Margin="0,10,0,0">
+                    <TextBlock Text="{Binding SamplingStatus}" />
+                    <TextBlock Foreground="Firebrick"
+                               Text="{Binding ErrorMessage}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+
+            <TextBlock Grid.Row="2"
+                       Margin="0,24,0,8"
+                       FontSize="16"
+                       FontWeight="SemiBold"
+                       Text="Recent CPU history (oldest to newest)" />
+
+            <Border Grid.Row="3"
+                    Padding="12"
+                    BorderBrush="DarkGray"
+                    BorderThickness="1"
+                    CornerRadius="4">
+                <ItemsControl ItemsSource="{Binding CpuHistory}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Margin="0,0,12,6"
+                                       Text="{Binding CpuUsagePercent, StringFormat={}{0:F1}%}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
+        </Grid>
+    </ScrollViewer>
 </Window>

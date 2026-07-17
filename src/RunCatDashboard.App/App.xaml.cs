@@ -31,13 +31,15 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _serviceProvider.Dispose();
+        _serviceProvider.DisposeAsync().AsTask().GetAwaiter().GetResult();
         base.OnExit(e);
     }
 
     private static void ConfigureServices(IServiceCollection services)
     {
         services.AddSingleton<ISystemMetricsService, WindowsSystemMetricsService>();
+        services.AddSingleton<IUiDispatcher>(
+            _ => new WpfUiDispatcher(Current.Dispatcher));
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<MainWindow>();
     }
