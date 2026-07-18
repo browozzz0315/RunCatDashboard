@@ -1,8 +1,10 @@
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using RunCatDashboard.App.Collections;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
+using RunCatDashboard.App.Windowing;
 
 namespace RunCatDashboard.App.ViewModels;
 
@@ -13,6 +15,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
     private readonly ISystemMetricsService _systemMetricsService;
     private readonly IUiDispatcher _uiDispatcher;
+    private readonly IOverlayWindowController _overlayWindowController;
     private readonly BoundedHistory<SystemMetricsSnapshot> _cpuHistoryBuffer;
     private readonly TimeSpan _samplingInterval;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
@@ -46,15 +49,32 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     [ObservableProperty]
     private string? _errorMessage;
 
+    [ObservableProperty]
+    private OverlayInteractionMode _overlayMode;
+
+    [ObservableProperty]
+    private string? _overlayErrorMessage;
+
+    public string OverlayModeText => OverlayMode switch
+    {
+        OverlayInteractionMode.Interactive => "Interactive",
+        OverlayInteractionMode.ClickThrough => "Click-through",
+        _ => "Unknown"
+    };
+
+    public bool IsInteractive => OverlayMode == OverlayInteractionMode.Interactive;
+
     public MainWindowViewModel(
         ISystemMetricsService systemMetricsService,
-        IUiDispatcher uiDispatcher)
+        IUiDispatcher uiDispatcher,
+        IOverlayWindowController overlayWindowController)
         : this(
             systemMetricsService,
             uiDispatcher,
             DefaultCpuHistoryCapacity,
             DefaultSamplingInterval,
-            Task.Delay)
+            Task.Delay,
+            overlayWindowController)
     {
     }
 
@@ -63,18 +83,51 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         IUiDispatcher uiDispatcher,
         int cpuHistoryCapacity,
         TimeSpan samplingInterval,
-        Func<TimeSpan, CancellationToken, Task> delayAsync)
+        Func<TimeSpan, CancellationToken, Task> delayAsync,
+        IOverlayWindowController overlayWindowController)
     {
         ArgumentNullException.ThrowIfNull(systemMetricsService);
         ArgumentNullException.ThrowIfNull(uiDispatcher);
         ArgumentNullException.ThrowIfNull(delayAsync);
+        ArgumentNullException.ThrowIfNull(overlayWindowController);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(samplingInterval, TimeSpan.Zero);
 
         _systemMetricsService = systemMetricsService;
         _uiDispatcher = uiDispatcher;
+        _overlayWindowController = overlayWindowController;
         _cpuHistoryBuffer = new BoundedHistory<SystemMetricsSnapshot>(cpuHistoryCapacity);
         _samplingInterval = samplingInterval;
         _delayAsync = delayAsync;
+        _overlayMode = overlayWindowController.Mode;
+    }
+
+    public bool TrySetOverlayMode(OverlayInteractionMode mode)
+    {
+        try
+        {
+            bool changed = _overlayWindowController.SetMode(mode);
+            OverlayMode = _overlayWindowController.Mode;
+            OverlayErrorMessage = null;
+            return changed;
+        }
+        catch (Exception exception) when (
+            exception is InvalidOperationException or ArgumentException)
+        {
+            OverlayErrorMessage = $"Overlay mode change failed: {exception.Message}";
+            return false;
+        }
+    }
+
+    [RelayCommand]
+    private void EnableInteractive()
+    {
+        TrySetOverlayMode(OverlayInteractionMode.Interactive);
+    }
+
+    [RelayCommand]
+    private void EnableClickThrough()
+    {
+        TrySetOverlayMode(OverlayInteractionMode.ClickThrough);
     }
 
     public bool Start()
@@ -239,5 +292,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         const double bytesPerGibibyte = 1024d * 1024d * 1024d;
         double gibibytes = bytes / bytesPerGibibyte;
         return string.Create(CultureInfo.InvariantCulture, $"{gibibytes:F2} GiB");
+    }
+
+    partial void OnOverlayModeChanged(OverlayInteractionMode value)
+    {
+        OnPropertyChanged(nameof(OverlayModeText));
+        OnPropertyChanged(nameof(IsInteractive));
     }
 }

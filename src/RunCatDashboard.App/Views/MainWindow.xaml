@@ -4,90 +4,171 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="RunCatDashboard"
-        Height="430"
+        Title="RunCatDashboard Overlay Research"
+        Height="510"
         Width="620"
-        MinHeight="360"
-        MinWidth="520">
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <Grid Margin="24">
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        ShowActivated="False"
+        ShowInTaskbar="False"
+        Topmost="True"
+        WindowStyle="None">
+    <Border Margin="12"
+            Padding="20"
+            Background="#E6262C36"
+            BorderBrush="#807B8794"
+            BorderThickness="1"
+            CornerRadius="10">
+        <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <TextBlock FontSize="24"
-                       FontWeight="SemiBold"
-                       Text="System Metrics Dashboard" />
+            <Border Padding="4,2,4,12"
+                    Background="Transparent"
+                    Cursor="SizeAll"
+                    MouseLeftButtonDown="OnDragSurfaceMouseLeftButtonDown">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-            <Grid Grid.Row="1" Margin="0,20,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="24" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Foreground="White"
+                                   FontSize="22"
+                                   FontWeight="SemiBold"
+                                   Text="Overlay behavior research" />
+                        <TextBlock Margin="0,4,0,0"
+                                   Foreground="#FFB8C1CC"
+                                   Text="Drag this header while Interactive" />
+                    </StackPanel>
 
-                <TextBlock Grid.Row="0" Text="CPU" />
-                <TextBlock Grid.Row="0" Grid.Column="2"
-                           FontWeight="SemiBold"
-                           Text="{Binding CpuUsageText}" />
-
-                <TextBlock Grid.Row="1" Margin="0,10,0,0" Text="Memory" />
-                <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,10,0,0"
-                           FontWeight="SemiBold"
-                           Text="{Binding MemoryUsageText}" />
-
-                <TextBlock Grid.Row="2" Margin="0,10,0,0" Text="Used / Total Memory" />
-                <TextBlock Grid.Row="2" Grid.Column="2" Margin="0,10,0,0"
-                           Text="{Binding UsedAndTotalMemoryText}" />
-
-                <TextBlock Grid.Row="3" Margin="0,10,0,0" Text="Last updated" />
-                <TextBlock Grid.Row="3" Grid.Column="2" Margin="0,10,0,0"
-                           Text="{Binding LastUpdatedText}" />
-
-                <TextBlock Grid.Row="4" Margin="0,10,0,0" Text="Status" />
-                <StackPanel Grid.Row="4" Grid.Column="2" Margin="0,10,0,0">
-                    <TextBlock Text="{Binding SamplingStatus}" />
-                    <TextBlock Foreground="Firebrick"
-                               Text="{Binding ErrorMessage}"
-                               TextWrapping="Wrap" />
-                </StackPanel>
-            </Grid>
-
-            <TextBlock Grid.Row="2"
-                       Margin="0,24,0,8"
-                       FontSize="16"
-                       FontWeight="SemiBold"
-                       Text="Recent CPU history (oldest to newest)" />
-
-            <Border Grid.Row="3"
-                    Padding="12"
-                    BorderBrush="DarkGray"
-                    BorderThickness="1"
-                    CornerRadius="4">
-                <ItemsControl ItemsSource="{Binding CpuHistory}">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <WrapPanel />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <TextBlock Margin="0,0,12,6"
-                                       Text="{Binding CpuUsagePercent, StringFormat={}{0:F1}%}" />
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                    <Border Grid.Column="1"
+                            Padding="12,6"
+                            VerticalAlignment="Center"
+                            Background="#FF394453"
+                            CornerRadius="14">
+                        <TextBlock Foreground="White"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding OverlayModeText}" />
+                    </Border>
+                </Grid>
             </Border>
+
+            <StackPanel Grid.Row="1" Margin="0,4,0,14">
+                <WrapPanel>
+                    <Button Margin="0,0,8,0"
+                            Padding="12,6"
+                            Command="{Binding EnableClickThroughCommand}"
+                            Content="Enable click-through" />
+                    <Button Padding="12,6"
+                            Click="OnCloseButtonClick"
+                            Content="Close experiment" />
+                </WrapPanel>
+                <TextBlock Margin="0,8,0,0"
+                           Foreground="#FFFFD580"
+                           Text="Research safety: Click-through returns automatically after 10 seconds; press Esc if this window still has keyboard focus."
+                           TextWrapping="Wrap" />
+                <TextBlock Margin="0,4,0,0"
+                           Foreground="#FFFF8A80"
+                           Text="{Binding OverlayErrorMessage}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <Separator Grid.Row="2" Margin="0,0,0,14" />
+
+            <ScrollViewer Grid.Row="3"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Foreground="White"
+                               FontSize="18"
+                               FontWeight="SemiBold"
+                               Text="System Metrics Dashboard" />
+
+                    <Grid Grid.Row="1" Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="24" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Foreground="#FFD8DEE9" Text="CPU" />
+                        <TextBlock Grid.Column="2"
+                                   Foreground="White"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding CpuUsageText}" />
+
+                        <TextBlock Grid.Row="1" Margin="0,8,0,0" Foreground="#FFD8DEE9" Text="Memory" />
+                        <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,8,0,0"
+                                   Foreground="White"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding MemoryUsageText}" />
+
+                        <TextBlock Grid.Row="2" Margin="0,8,0,0" Foreground="#FFD8DEE9" Text="Used / Total Memory" />
+                        <TextBlock Grid.Row="2" Grid.Column="2" Margin="0,8,0,0"
+                                   Foreground="White"
+                                   Text="{Binding UsedAndTotalMemoryText}" />
+
+                        <TextBlock Grid.Row="3" Margin="0,8,0,0" Foreground="#FFD8DEE9" Text="Last updated" />
+                        <TextBlock Grid.Row="3" Grid.Column="2" Margin="0,8,0,0"
+                                   Foreground="White"
+                                   Text="{Binding LastUpdatedText}" />
+
+                        <TextBlock Grid.Row="4" Margin="0,8,0,0" Foreground="#FFD8DEE9" Text="Status" />
+                        <StackPanel Grid.Row="4" Grid.Column="2" Margin="0,8,0,0">
+                            <TextBlock Foreground="White" Text="{Binding SamplingStatus}" />
+                            <TextBlock Foreground="#FFFF8A80"
+                                       Text="{Binding ErrorMessage}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel Grid.Row="2" Margin="0,16,0,0">
+                        <TextBlock Margin="0,0,0,8"
+                                   Foreground="White"
+                                   FontWeight="SemiBold"
+                                   Text="Recent CPU history (oldest to newest)" />
+                        <Border Padding="10"
+                                Background="#402F3742"
+                                BorderBrush="#807B8794"
+                                BorderThickness="1"
+                                CornerRadius="4">
+                            <ItemsControl ItemsSource="{Binding CpuHistory}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Margin="0,0,12,6"
+                                                   Foreground="White"
+                                                   Text="{Binding CpuUsagePercent, StringFormat={}{0:F1}%}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
         </Grid>
-    </ScrollViewer>
+    </Border>
 </Window>
