@@ -2,7 +2,7 @@ namespace RunCatDashboard.App.Windowing;
 
 public interface IOverlayWindowController
 {
-    OverlayInteractionMode Mode { get; }
+    OverlayWindowState State { get; }
 
     bool IsInitialized { get; }
 

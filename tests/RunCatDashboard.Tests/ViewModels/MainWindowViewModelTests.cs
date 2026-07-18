@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.ViewModels;
@@ -23,38 +24,52 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("-- / --", viewModel.UsedAndTotalMemoryText);
         Assert.Equal("--", viewModel.LastUpdatedText);
         Assert.Empty(viewModel.CpuHistory);
+        Assert.Empty(viewModel.CpuHistoryNewestFirst);
         Assert.False(viewModel.IsSampling);
         Assert.Equal("Stopped", viewModel.SamplingStatus);
         Assert.Null(viewModel.ErrorMessage);
-        Assert.Equal(OverlayInteractionMode.Interactive, viewModel.OverlayMode);
-        Assert.Equal("Interactive", viewModel.OverlayModeText);
+        Assert.Equal(OverlayInteractionMode.ClickThrough, viewModel.OverlayMode);
+        Assert.Equal("Click-through (pending)", viewModel.OverlayModeText);
+        Assert.False(viewModel.HasAppliedOverlayMode);
         Assert.True(viewModel.IsInteractive);
+        Assert.False(viewModel.IsOverlayFaulted);
         Assert.Null(viewModel.OverlayErrorMessage);
     }
 
     [Fact]
-    public async Task OverlayModeTransitions_DoNotChangeSamplingLifecycle()
+    public async Task GlobalHotKeyModeTransitions_DoNotChangeSamplingLifecycle()
     {
         var service = new SequenceMetricsService(Snapshot(10d));
         var delay = new ControlledDelay();
+        var hotKeyController = new GlobalHotKeyController(new NoOpNativeGlobalHotKeyApi());
+        hotKeyController.Register(new nint(1234));
         var overlayController = new FakeOverlayWindowController();
+        var coordinator = new OverlayModeCoordinator(overlayController);
+        var messageHandler = new OverlayHotKeyMessageHandler(hotKeyController, coordinator);
         await using MainWindowViewModel viewModel = CreateViewModel(
             service,
-            delay,
-            overlayController: overlayController);
+            delay);
         viewModel.Start();
         await delay.WaitUntilDelayStartsAsync();
 
-        Assert.True(viewModel.TrySetOverlayMode(OverlayInteractionMode.ClickThrough));
+        Assert.True(messageHandler.TryHandleMessage(
+            GlobalHotKeyController.WindowMessageHotKey,
+            new nint(GlobalHotKeyController.HotKeyIdentifier),
+            out OverlayWindowState interactiveState));
+        viewModel.ApplyOverlayState(interactiveState);
         Assert.True(viewModel.IsSampling);
         Assert.Equal("Sampling", viewModel.SamplingStatus);
         Assert.Equal(1, service.SampleCount);
-        Assert.Equal("Click-through", viewModel.OverlayModeText);
+        Assert.Equal("Interactive", viewModel.OverlayModeText);
 
-        Assert.True(viewModel.TrySetOverlayMode(OverlayInteractionMode.Interactive));
+        Assert.True(messageHandler.TryHandleMessage(
+            GlobalHotKeyController.WindowMessageHotKey,
+            new nint(GlobalHotKeyController.HotKeyIdentifier),
+            out OverlayWindowState clickThroughState));
+        viewModel.ApplyOverlayState(clickThroughState);
         Assert.True(viewModel.IsSampling);
         Assert.Equal(1, service.SampleCount);
-        Assert.Equal("Interactive", viewModel.OverlayModeText);
+        Assert.Equal("Click-through", viewModel.OverlayModeText);
         Assert.Equal(2, overlayController.SetModeCount);
     }
 
@@ -115,6 +130,20 @@ public sealed class MainWindowViewModelTests
                 Snapshot(null),
                 secondValid),
             delay);
+        int cpuHistoryChangeCount = 0;
+        int newestFirstChangeCount = 0;
+        viewModel.PropertyChanged += (_, eventArgs) =>
+        {
+            if (eventArgs.PropertyName == nameof(MainWindowViewModel.CpuHistory))
+            {
+                cpuHistoryChangeCount++;
+            }
+
+            if (eventArgs.PropertyName == nameof(MainWindowViewModel.CpuHistoryNewestFirst))
+            {
+                newestFirstChangeCount++;
+            }
+        };
 
         viewModel.Start();
         await AdvanceToNextSampleAsync(delay);
@@ -123,6 +152,38 @@ public sealed class MainWindowViewModelTests
         await delay.WaitUntilDelayStartsAsync();
 
         Assert.Equal([firstValid, secondValid], viewModel.CpuHistory);
+        Assert.Equal([secondValid, firstValid], viewModel.CpuHistoryNewestFirst);
+        Assert.Equal(2, cpuHistoryChangeCount);
+        Assert.Equal(cpuHistoryChangeCount, newestFirstChangeCount);
+    }
+
+    [Fact]
+    public async Task CpuHistoryNewestFirst_AboveTwenty_ShowsOnlyNewestTwenty()
+    {
+        SystemMetricsSnapshot[] snapshots = Enumerable.Range(1, 25)
+            .Select(value => Snapshot(value))
+            .ToArray();
+        var delay = new ControlledDelay();
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(snapshots.Cast<object>().ToArray()),
+            delay,
+            cpuHistoryCapacity: MainWindowViewModel.DefaultCpuHistoryCapacity);
+
+        viewModel.Start();
+        for (int index = 1; index < snapshots.Length; index++)
+        {
+            await AdvanceToNextSampleAsync(delay);
+        }
+
+        await delay.WaitUntilDelayStartsAsync();
+
+        Assert.Equal(
+            Enumerable.Range(1, 25).Select(value => (double?)value),
+            viewModel.CpuHistory.Select(item => item.CpuUsagePercent));
+        Assert.Equal(MainWindowViewModel.DisplayedCpuHistoryCapacity, viewModel.CpuHistoryNewestFirst.Count);
+        Assert.Equal(
+            Enumerable.Range(6, 20).Reverse().Select(value => (double?)value),
+            viewModel.CpuHistoryNewestFirst.Select(item => item.CpuUsagePercent));
     }
 
     [Fact]
@@ -281,16 +342,14 @@ public sealed class MainWindowViewModelTests
     private static MainWindowViewModel CreateViewModel(
         ISystemMetricsService service,
         ControlledDelay delay,
-        int cpuHistoryCapacity = 3,
-        IOverlayWindowController? overlayController = null)
+        int cpuHistoryCapacity = 3)
     {
         return new MainWindowViewModel(
             service,
             new ImmediateUiDispatcher(),
             cpuHistoryCapacity,
             TimeSpan.FromSeconds(1),
-            delay.DelayAsync,
-            overlayController ?? new FakeOverlayWindowController());
+            delay.DelayAsync);
     }
 
     private static SystemMetricsSnapshot Snapshot(
@@ -325,10 +384,25 @@ public sealed class MainWindowViewModelTests
         }
     }
 
+    private sealed class NoOpNativeGlobalHotKeyApi : INativeGlobalHotKeyApi
+    {
+        public void Register(nint windowHandle, int identifier, uint modifiers, uint virtualKey)
+        {
+        }
+
+        public void Unregister(nint windowHandle, int identifier)
+        {
+        }
+    }
+
     private sealed class FakeOverlayWindowController : IOverlayWindowController
     {
-        public OverlayInteractionMode Mode { get; private set; } =
-            OverlayInteractionMode.Interactive;
+        public OverlayWindowState State { get; private set; } = new(
+            OverlayInteractionMode.ClickThrough,
+            OverlayInteractionMode.ClickThrough,
+            true,
+            false,
+            null);
 
         public bool IsInitialized => true;
 
@@ -341,12 +415,7 @@ public sealed class MainWindowViewModelTests
         public bool SetMode(OverlayInteractionMode mode)
         {
             SetModeCount++;
-            if (Mode == mode)
-            {
-                return false;
-            }
-
-            Mode = mode;
+            State = new OverlayWindowState(mode, mode, true, false, null);
             return true;
         }
 

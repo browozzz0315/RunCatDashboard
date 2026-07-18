@@ -9,82 +9,86 @@ public sealed class OverlayWindowControllerTests
     private static readonly nint WindowHandle = new(1234);
 
     [Fact]
-    public void Constructor_StartsInteractiveAndUninitialized()
+    public void Constructor_RequestsClickThroughAndHasNoAppliedModeBeforeHwnd()
     {
         var controller = new OverlayWindowController(new FakeNativeWindowStyleApi());
 
-        Assert.Equal(OverlayInteractionMode.Interactive, controller.Mode);
-        Assert.False(controller.IsInitialized);
+        Assert.Equal(OverlayInteractionMode.ClickThrough, controller.State.RequestedMode);
+        Assert.Null(controller.State.AppliedMode);
+        Assert.False(controller.State.IsInitialized);
+        Assert.False(controller.State.IsFaulted);
+        Assert.Null(controller.State.LastError);
     }
 
     [Fact]
-    public void Initialize_AppliesInteractiveStylesWithoutRemovingUnrelatedBits()
+    public void Initialize_AppliesClickThroughAndPreservesUnrelatedBits()
     {
         const long unrelatedStyle = 0x00004000L;
         var nativeApi = new FakeNativeWindowStyleApi
         {
-            CurrentStyle = unrelatedStyle |
-                (long)ExtendedWindowStyle.Transparent |
-                (long)ExtendedWindowStyle.NoActivate
+            CurrentStyle = unrelatedStyle
         };
         var controller = new OverlayWindowController(nativeApi);
 
         controller.Initialize(WindowHandle);
 
         Assert.True(controller.IsInitialized);
-        Assert.Equal(
-            unrelatedStyle | (long)ExtendedWindowStyle.ToolWindow,
-            nativeApi.CurrentStyle);
+        Assert.Equal(OverlayInteractionMode.ClickThrough, controller.State.AppliedMode);
+        Assert.Equal(controller.State.RequestedMode, controller.State.AppliedMode);
+        AssertStyleIsSet(nativeApi.CurrentStyle, ExtendedWindowStyle.ToolWindow);
+        AssertStyleIsSet(nativeApi.CurrentStyle, ExtendedWindowStyle.Transparent);
+        AssertStyleIsSet(nativeApi.CurrentStyle, ExtendedWindowStyle.NoActivate);
+        AssertStyleIsSet(nativeApi.CurrentStyle, (ExtendedWindowStyle)unrelatedStyle);
         Assert.Equal(1, nativeApi.SetCount);
         Assert.Equal(1, nativeApi.RefreshCount);
     }
 
     [Fact]
-    public void SetMode_InteractiveToClickThrough_AddsInputStyles()
+    public void SetMode_ClickThroughToInteractive_RemovesOnlyManagedInputStyles()
     {
-        var nativeApi = CreateInitializedNativeApi();
+        const long unrelatedStyle = 0x00004000L;
+        var nativeApi = new FakeNativeWindowStyleApi
+        {
+            CurrentStyle = unrelatedStyle
+        };
         var controller = new OverlayWindowController(nativeApi);
         controller.Initialize(WindowHandle);
+
+        bool changed = controller.SetMode(OverlayInteractionMode.Interactive);
+
+        Assert.True(changed);
+        Assert.Equal(OverlayInteractionMode.Interactive, controller.State.AppliedMode);
+        Assert.Equal(
+            unrelatedStyle | (long)ExtendedWindowStyle.ToolWindow,
+            nativeApi.CurrentStyle);
+    }
+
+    [Fact]
+    public void SetMode_InteractiveToClickThrough_AddsManagedInputStyles()
+    {
+        var nativeApi = new FakeNativeWindowStyleApi();
+        var controller = new OverlayWindowController(nativeApi);
+        controller.Initialize(WindowHandle);
+        controller.SetMode(OverlayInteractionMode.Interactive);
 
         bool changed = controller.SetMode(OverlayInteractionMode.ClickThrough);
 
         Assert.True(changed);
-        Assert.Equal(OverlayInteractionMode.ClickThrough, controller.Mode);
+        Assert.Equal(OverlayInteractionMode.ClickThrough, controller.State.AppliedMode);
         AssertStyleIsSet(nativeApi.CurrentStyle, ExtendedWindowStyle.ToolWindow);
         AssertStyleIsSet(nativeApi.CurrentStyle, ExtendedWindowStyle.Transparent);
         AssertStyleIsSet(nativeApi.CurrentStyle, ExtendedWindowStyle.NoActivate);
     }
 
     [Fact]
-    public void SetMode_ClickThroughToInteractive_RemovesOnlyInputStyles()
+    public void SetMode_WithSameAppliedMode_IsIdempotentAndSkipsNativeCalls()
     {
-        const long unrelatedStyle = 0x00004000L;
-        var nativeApi = new FakeNativeWindowStyleApi
-        {
-            CurrentStyle = unrelatedStyle | (long)ExtendedWindowStyle.ToolWindow
-        };
-        var controller = new OverlayWindowController(nativeApi);
-        controller.Initialize(WindowHandle);
-        controller.SetMode(OverlayInteractionMode.ClickThrough);
-
-        bool changed = controller.SetMode(OverlayInteractionMode.Interactive);
-
-        Assert.True(changed);
-        Assert.Equal(OverlayInteractionMode.Interactive, controller.Mode);
-        Assert.Equal(
-            unrelatedStyle | (long)ExtendedWindowStyle.ToolWindow,
-            nativeApi.CurrentStyle);
-    }
-
-    [Fact]
-    public void SetMode_WithSameMode_IsIdempotentAndSkipsNativeCalls()
-    {
-        var nativeApi = CreateInitializedNativeApi();
+        var nativeApi = new FakeNativeWindowStyleApi();
         var controller = new OverlayWindowController(nativeApi);
         controller.Initialize(WindowHandle);
         nativeApi.ResetCounts();
 
-        bool changed = controller.SetMode(OverlayInteractionMode.Interactive);
+        bool changed = controller.SetMode(OverlayInteractionMode.ClickThrough);
 
         Assert.False(changed);
         Assert.Equal(0, nativeApi.GetCount);
@@ -93,18 +97,71 @@ public sealed class OverlayWindowControllerTests
     }
 
     [Fact]
-    public void SetMode_BeforeHandleInitialization_ThrowsClearException()
+    public void SetMode_WhenStyleSetFails_DoesNotUpdateAppliedMode()
     {
-        var controller = new OverlayWindowController(new FakeNativeWindowStyleApi());
+        var nativeApi = new FakeNativeWindowStyleApi();
+        var controller = new OverlayWindowController(nativeApi);
+        controller.Initialize(WindowHandle);
+        nativeApi.ResetCounts();
+        nativeApi.SetFailures.Add(1);
 
-        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
-            () => controller.SetMode(OverlayInteractionMode.ClickThrough));
+        OverlayWindowException exception = Assert.Throws<OverlayWindowException>(
+            () => controller.SetMode(OverlayInteractionMode.Interactive));
 
-        Assert.Contains("has not been initialized", exception.Message);
+        Assert.Contains("style update was not confirmed", exception.Message);
+        Assert.Equal(OverlayInteractionMode.Interactive, controller.State.RequestedMode);
+        Assert.Equal(OverlayInteractionMode.ClickThrough, controller.State.AppliedMode);
+        Assert.False(controller.State.IsFaulted);
+        Assert.NotNull(controller.State.LastError);
     }
 
     [Fact]
-    public void Initialize_WhenNativeCallFails_ThrowsOverlayExceptionAndKeepsHandleInvalid()
+    public void SetMode_WhenFrameRefreshFails_RollsBackAndKeepsAppliedMode()
+    {
+        var nativeApi = new FakeNativeWindowStyleApi();
+        var controller = new OverlayWindowController(nativeApi);
+        controller.Initialize(WindowHandle);
+        long clickThroughStyle = nativeApi.CurrentStyle;
+        nativeApi.ResetCounts();
+        nativeApi.RefreshFailures.Add(1);
+
+        OverlayWindowException exception = Assert.Throws<OverlayWindowException>(
+            () => controller.SetMode(OverlayInteractionMode.Interactive));
+
+        Assert.Contains("previous native style was restored", exception.Message);
+        Assert.Equal(clickThroughStyle, nativeApi.CurrentStyle);
+        Assert.Equal(OverlayInteractionMode.ClickThrough, controller.State.AppliedMode);
+        Assert.False(controller.State.IsFaulted);
+        Assert.Equal(2, nativeApi.SetCount);
+        Assert.Equal(2, nativeApi.RefreshCount);
+    }
+
+    [Fact]
+    public void SetMode_WhenRollbackFails_EntersFaultStateAndRejectsFurtherOperations()
+    {
+        var nativeApi = new FakeNativeWindowStyleApi();
+        var controller = new OverlayWindowController(nativeApi);
+        controller.Initialize(WindowHandle);
+        nativeApi.ResetCounts();
+        nativeApi.RefreshFailures.Add(1);
+        nativeApi.SetFailures.Add(2);
+
+        OverlayWindowException exception = Assert.Throws<OverlayWindowException>(
+            () => controller.SetMode(OverlayInteractionMode.Interactive));
+
+        Assert.Contains("native window style is unknown", exception.Message);
+        Assert.True(controller.State.IsFaulted);
+        Assert.Null(controller.State.AppliedMode);
+        Assert.NotNull(controller.State.LastError);
+
+        int getCount = nativeApi.GetCount;
+        Assert.Throws<OverlayWindowException>(
+            () => controller.SetMode(OverlayInteractionMode.ClickThrough));
+        Assert.Equal(getCount, nativeApi.GetCount);
+    }
+
+    [Fact]
+    public void Initialize_WhenNativeReadFails_HasClearErrorAndKeepsHandleInvalid()
     {
         var nativeApi = new FakeNativeWindowStyleApi
         {
@@ -117,44 +174,26 @@ public sealed class OverlayWindowControllerTests
 
         Assert.Contains("initialize overlay window styles", exception.Message);
         Assert.Contains("could not be read", exception.Message);
-        Assert.IsType<Win32Exception>(exception.InnerException);
         Assert.False(controller.IsInitialized);
+        Assert.Null(controller.State.AppliedMode);
+        Assert.NotNull(controller.State.LastError);
     }
 
     [Fact]
-    public void SetMode_WhenFrameRefreshFails_RestoresPreviousStyle()
+    public void SetMode_BeforeHandleInitialization_ThrowsClearException()
     {
-        var nativeApi = CreateInitializedNativeApi();
-        var controller = new OverlayWindowController(nativeApi);
-        controller.Initialize(WindowHandle);
-        nativeApi.RefreshException = new Win32Exception(5, "Refresh failed");
+        var controller = new OverlayWindowController(new FakeNativeWindowStyleApi());
 
-        OverlayWindowException exception = Assert.Throws<OverlayWindowException>(
-            () => controller.SetMode(OverlayInteractionMode.ClickThrough));
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
+            () => controller.SetMode(OverlayInteractionMode.Interactive));
 
-        Assert.Contains("previous native style was restored", exception.Message);
-        Assert.Equal((long)ExtendedWindowStyle.ToolWindow, nativeApi.CurrentStyle);
-        Assert.Equal(OverlayInteractionMode.Interactive, controller.Mode);
-        Assert.Equal(2, nativeApi.SetCount);
+        Assert.Contains("has not been initialized", exception.Message);
     }
 
     [Fact]
-    public void SetMode_WhenNativeCallFails_DoesNotCommitRequestedMode()
+    public void Close_IsIdempotentAndPreventsFurtherNativeOperations()
     {
-        var nativeApi = CreateInitializedNativeApi();
-        var controller = new OverlayWindowController(nativeApi);
-        controller.Initialize(WindowHandle);
-        nativeApi.GetException = new Win32Exception(1400, "Invalid window handle");
-
-        Assert.Throws<OverlayWindowException>(
-            () => controller.SetMode(OverlayInteractionMode.ClickThrough));
-        Assert.Equal(OverlayInteractionMode.Interactive, controller.Mode);
-    }
-
-    [Fact]
-    public void Close_InvalidatesHandleAndPreventsFurtherNativeOperations()
-    {
-        var nativeApi = CreateInitializedNativeApi();
+        var nativeApi = new FakeNativeWindowStyleApi();
         var controller = new OverlayWindowController(nativeApi);
         controller.Initialize(WindowHandle);
         nativeApi.ResetCounts();
@@ -163,19 +202,12 @@ public sealed class OverlayWindowControllerTests
         controller.Close();
 
         Assert.False(controller.IsInitialized);
+        Assert.Null(controller.State.AppliedMode);
         Assert.Throws<ObjectDisposedException>(
-            () => controller.SetMode(OverlayInteractionMode.ClickThrough));
+            () => controller.SetMode(OverlayInteractionMode.Interactive));
         Assert.Equal(0, nativeApi.GetCount);
         Assert.Equal(0, nativeApi.SetCount);
         Assert.Equal(0, nativeApi.RefreshCount);
-    }
-
-    private static FakeNativeWindowStyleApi CreateInitializedNativeApi()
-    {
-        return new FakeNativeWindowStyleApi
-        {
-            CurrentStyle = (long)ExtendedWindowStyle.ToolWindow
-        };
     }
 
     private static void AssertStyleIsSet(long style, ExtendedWindowStyle expected)
@@ -189,7 +221,9 @@ public sealed class OverlayWindowControllerTests
 
         internal Win32Exception? GetException { get; set; }
 
-        internal Win32Exception? RefreshException { get; set; }
+        internal HashSet<int> SetFailures { get; } = [];
+
+        internal HashSet<int> RefreshFailures { get; } = [];
 
         internal int GetCount { get; private set; }
 
@@ -211,17 +245,20 @@ public sealed class OverlayWindowControllerTests
         public void SetExtendedStyle(nint windowHandle, long style)
         {
             SetCount++;
+            if (SetFailures.Contains(SetCount))
+            {
+                throw new Win32Exception(5, "Configured style set failure.");
+            }
+
             CurrentStyle = style;
         }
 
         public void RefreshFrame(nint windowHandle)
         {
             RefreshCount++;
-            if (RefreshException is not null)
+            if (RefreshFailures.Contains(RefreshCount))
             {
-                Win32Exception exception = RefreshException;
-                RefreshException = null;
-                throw exception;
+                throw new Win32Exception(5, "Configured frame refresh failure.");
             }
         }
 

@@ -1,6 +1,5 @@
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
 using RunCatDashboard.App.Collections;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
@@ -11,11 +10,11 @@ namespace RunCatDashboard.App.ViewModels;
 public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDisposable
 {
     internal const int DefaultCpuHistoryCapacity = 30;
+    internal const int DisplayedCpuHistoryCapacity = 20;
     internal static readonly TimeSpan DefaultSamplingInterval = TimeSpan.FromSeconds(1);
 
     private readonly ISystemMetricsService _systemMetricsService;
     private readonly IUiDispatcher _uiDispatcher;
-    private readonly IOverlayWindowController _overlayWindowController;
     private readonly BoundedHistory<SystemMetricsSnapshot> _cpuHistoryBuffer;
     private readonly TimeSpan _samplingInterval;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
@@ -40,6 +39,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private IReadOnlyList<SystemMetricsSnapshot> _cpuHistory =
         Array.Empty<SystemMetricsSnapshot>();
 
+    private IReadOnlyList<SystemMetricsSnapshot> _cpuHistoryNewestFirst =
+        Array.Empty<SystemMetricsSnapshot>();
+
     [ObservableProperty]
     private bool _isSampling;
 
@@ -50,31 +52,62 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private string? _errorMessage;
 
     [ObservableProperty]
-    private OverlayInteractionMode _overlayMode;
+    private OverlayInteractionMode _overlayMode = OverlayInteractionMode.ClickThrough;
+
+    [ObservableProperty]
+    private bool _hasAppliedOverlayMode;
+
+    [ObservableProperty]
+    private bool _isOverlayFaulted;
 
     [ObservableProperty]
     private string? _overlayErrorMessage;
 
-    public string OverlayModeText => OverlayMode switch
+    public string OverlayModeText
     {
-        OverlayInteractionMode.Interactive => "Interactive",
-        OverlayInteractionMode.ClickThrough => "Click-through",
-        _ => "Unknown"
-    };
+        get
+        {
+            if (IsOverlayFaulted)
+            {
+                return "Faulted";
+            }
 
-    public bool IsInteractive => OverlayMode == OverlayInteractionMode.Interactive;
+            if (!HasAppliedOverlayMode && OverlayErrorMessage is not null)
+            {
+                return "Interactive fallback";
+            }
+
+            string modeText = OverlayMode switch
+            {
+                OverlayInteractionMode.Interactive => "Interactive",
+                OverlayInteractionMode.ClickThrough => "Click-through",
+                _ => "Unknown"
+            };
+
+            return HasAppliedOverlayMode ? modeText : $"{modeText} (pending)";
+        }
+    }
+
+    public bool IsInteractive =>
+        !HasAppliedOverlayMode ||
+        IsOverlayFaulted ||
+        OverlayMode == OverlayInteractionMode.Interactive;
+
+    public string OverlayHotKeyText =>
+        $"{GlobalHotKeyController.DefaultGestureText} — toggle interaction mode";
+
+    public IReadOnlyList<SystemMetricsSnapshot> CpuHistoryNewestFirst =>
+        _cpuHistoryNewestFirst;
 
     public MainWindowViewModel(
         ISystemMetricsService systemMetricsService,
-        IUiDispatcher uiDispatcher,
-        IOverlayWindowController overlayWindowController)
+        IUiDispatcher uiDispatcher)
         : this(
             systemMetricsService,
             uiDispatcher,
             DefaultCpuHistoryCapacity,
             DefaultSamplingInterval,
-            Task.Delay,
-            overlayWindowController)
+            Task.Delay)
     {
     }
 
@@ -83,51 +116,36 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         IUiDispatcher uiDispatcher,
         int cpuHistoryCapacity,
         TimeSpan samplingInterval,
-        Func<TimeSpan, CancellationToken, Task> delayAsync,
-        IOverlayWindowController overlayWindowController)
+        Func<TimeSpan, CancellationToken, Task> delayAsync)
     {
         ArgumentNullException.ThrowIfNull(systemMetricsService);
         ArgumentNullException.ThrowIfNull(uiDispatcher);
         ArgumentNullException.ThrowIfNull(delayAsync);
-        ArgumentNullException.ThrowIfNull(overlayWindowController);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(samplingInterval, TimeSpan.Zero);
 
         _systemMetricsService = systemMetricsService;
         _uiDispatcher = uiDispatcher;
-        _overlayWindowController = overlayWindowController;
         _cpuHistoryBuffer = new BoundedHistory<SystemMetricsSnapshot>(cpuHistoryCapacity);
         _samplingInterval = samplingInterval;
         _delayAsync = delayAsync;
-        _overlayMode = overlayWindowController.Mode;
     }
 
-    public bool TrySetOverlayMode(OverlayInteractionMode mode)
+    internal void ApplyOverlayState(
+        OverlayWindowState state,
+        string? additionalError = null)
     {
-        try
-        {
-            bool changed = _overlayWindowController.SetMode(mode);
-            OverlayMode = _overlayWindowController.Mode;
-            OverlayErrorMessage = null;
-            return changed;
-        }
-        catch (Exception exception) when (
-            exception is InvalidOperationException or ArgumentException)
-        {
-            OverlayErrorMessage = $"Overlay mode change failed: {exception.Message}";
-            return false;
-        }
+        ArgumentNullException.ThrowIfNull(state);
+
+        OverlayMode = state.AppliedMode ?? state.RequestedMode;
+        HasAppliedOverlayMode = state.AppliedMode.HasValue;
+        IsOverlayFaulted = state.IsFaulted;
+        OverlayErrorMessage = additionalError ?? state.LastError;
     }
 
-    [RelayCommand]
-    private void EnableInteractive()
+    internal void ReportOverlayError(string message)
     {
-        TrySetOverlayMode(OverlayInteractionMode.Interactive);
-    }
-
-    [RelayCommand]
-    private void EnableClickThrough()
-    {
-        TrySetOverlayMode(OverlayInteractionMode.ClickThrough);
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        OverlayErrorMessage = message;
     }
 
     public bool Start()
@@ -298,5 +316,32 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     {
         OnPropertyChanged(nameof(OverlayModeText));
         OnPropertyChanged(nameof(IsInteractive));
+    }
+
+    partial void OnCpuHistoryChanged(IReadOnlyList<SystemMetricsSnapshot> value)
+    {
+        _cpuHistoryNewestFirst = Array.AsReadOnly(
+            value
+                .Reverse()
+                .Take(DisplayedCpuHistoryCapacity)
+                .ToArray());
+        OnPropertyChanged(nameof(CpuHistoryNewestFirst));
+    }
+
+    partial void OnHasAppliedOverlayModeChanged(bool value)
+    {
+        OnPropertyChanged(nameof(OverlayModeText));
+        OnPropertyChanged(nameof(IsInteractive));
+    }
+
+    partial void OnIsOverlayFaultedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(OverlayModeText));
+        OnPropertyChanged(nameof(IsInteractive));
+    }
+
+    partial void OnOverlayErrorMessageChanged(string? value)
+    {
+        OnPropertyChanged(nameof(OverlayModeText));
     }
 }
