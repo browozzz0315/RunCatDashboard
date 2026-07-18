@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.ViewModels;
+using RunCatDashboard.App.Windowing;
 
 namespace RunCatDashboard.Tests.ViewModels;
 
@@ -25,6 +26,36 @@ public sealed class MainWindowViewModelTests
         Assert.False(viewModel.IsSampling);
         Assert.Equal("Stopped", viewModel.SamplingStatus);
         Assert.Null(viewModel.ErrorMessage);
+        Assert.Equal(OverlayInteractionMode.Interactive, viewModel.OverlayMode);
+        Assert.Equal("Interactive", viewModel.OverlayModeText);
+        Assert.True(viewModel.IsInteractive);
+        Assert.Null(viewModel.OverlayErrorMessage);
+    }
+
+    [Fact]
+    public async Task OverlayModeTransitions_DoNotChangeSamplingLifecycle()
+    {
+        var service = new SequenceMetricsService(Snapshot(10d));
+        var delay = new ControlledDelay();
+        var overlayController = new FakeOverlayWindowController();
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            service,
+            delay,
+            overlayController: overlayController);
+        viewModel.Start();
+        await delay.WaitUntilDelayStartsAsync();
+
+        Assert.True(viewModel.TrySetOverlayMode(OverlayInteractionMode.ClickThrough));
+        Assert.True(viewModel.IsSampling);
+        Assert.Equal("Sampling", viewModel.SamplingStatus);
+        Assert.Equal(1, service.SampleCount);
+        Assert.Equal("Click-through", viewModel.OverlayModeText);
+
+        Assert.True(viewModel.TrySetOverlayMode(OverlayInteractionMode.Interactive));
+        Assert.True(viewModel.IsSampling);
+        Assert.Equal(1, service.SampleCount);
+        Assert.Equal("Interactive", viewModel.OverlayModeText);
+        Assert.Equal(2, overlayController.SetModeCount);
     }
 
     [Fact]
@@ -250,14 +281,16 @@ public sealed class MainWindowViewModelTests
     private static MainWindowViewModel CreateViewModel(
         ISystemMetricsService service,
         ControlledDelay delay,
-        int cpuHistoryCapacity = 3)
+        int cpuHistoryCapacity = 3,
+        IOverlayWindowController? overlayController = null)
     {
         return new MainWindowViewModel(
             service,
             new ImmediateUiDispatcher(),
             cpuHistoryCapacity,
             TimeSpan.FromSeconds(1),
-            delay.DelayAsync);
+            delay.DelayAsync,
+            overlayController ?? new FakeOverlayWindowController());
     }
 
     private static SystemMetricsSnapshot Snapshot(
@@ -289,6 +322,36 @@ public sealed class MainWindowViewModelTests
             cancellationToken.ThrowIfCancellationRequested();
             action();
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class FakeOverlayWindowController : IOverlayWindowController
+    {
+        public OverlayInteractionMode Mode { get; private set; } =
+            OverlayInteractionMode.Interactive;
+
+        public bool IsInitialized => true;
+
+        internal int SetModeCount { get; private set; }
+
+        public void Initialize(nint windowHandle)
+        {
+        }
+
+        public bool SetMode(OverlayInteractionMode mode)
+        {
+            SetModeCount++;
+            if (Mode == mode)
+            {
+                return false;
+            }
+
+            Mode = mode;
+            return true;
+        }
+
+        public void Close()
+        {
         }
     }
 

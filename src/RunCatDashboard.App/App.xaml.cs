@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Views;
+using RunCatDashboard.App.Interop;
+using RunCatDashboard.App.Windowing;
 
 namespace RunCatDashboard.App;
 
@@ -40,6 +42,8 @@ public partial class App : Application
         services.AddSingleton<ISystemMetricsService, WindowsSystemMetricsService>();
         services.AddSingleton<IUiDispatcher>(
             _ => new WpfUiDispatcher(Current.Dispatcher));
+        services.AddSingleton<IOverlayWindowController>(
+            _ => new OverlayWindowController(new Win32NativeWindowStyleApi()));
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<MainWindow>();
     }
