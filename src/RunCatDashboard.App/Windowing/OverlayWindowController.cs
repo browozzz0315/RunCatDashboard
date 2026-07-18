@@ -20,6 +20,10 @@ internal sealed class OverlayWindowController : IOverlayWindowController
     private readonly INativeWindowStyleApi _nativeApi;
     private nint _windowHandle;
     private bool _isClosed;
+    private OverlayInteractionMode _requestedMode = OverlayInteractionMode.ClickThrough;
+    private OverlayInteractionMode? _appliedMode;
+    private bool _isFaulted;
+    private string? _lastError;
 
     internal OverlayWindowController(INativeWindowStyleApi nativeApi)
     {
@@ -27,8 +31,12 @@ internal sealed class OverlayWindowController : IOverlayWindowController
         _nativeApi = nativeApi;
     }
 
-    public OverlayInteractionMode Mode { get; private set; } =
-        OverlayInteractionMode.Interactive;
+    public OverlayWindowState State => new(
+        _requestedMode,
+        _appliedMode,
+        IsInitialized,
+        _isFaulted,
+        _lastError);
 
     public bool IsInitialized => _windowHandle != nint.Zero && !_isClosed;
 
@@ -46,37 +54,47 @@ internal sealed class OverlayWindowController : IOverlayWindowController
             throw new InvalidOperationException("The native window handle has already been initialized.");
         }
 
-        ApplyMode(windowHandle, Mode, "initialize overlay window styles");
+        ThrowIfFaulted();
+
+        ApplyMode(windowHandle, _requestedMode, "initialize overlay window styles");
         _windowHandle = windowHandle;
+        _appliedMode = _requestedMode;
+        _lastError = null;
     }
 
     public bool SetMode(OverlayInteractionMode mode)
     {
         ObjectDisposedException.ThrowIf(_isClosed, this);
-
-        if (_windowHandle == nint.Zero)
-        {
-            throw new InvalidOperationException("The native window handle has not been initialized.");
-        }
+        ThrowIfFaulted();
 
         if (!Enum.IsDefined(mode))
         {
             throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown overlay interaction mode.");
         }
 
-        if (Mode == mode)
+        if (_windowHandle == nint.Zero)
         {
+            throw new InvalidOperationException("The native window handle has not been initialized.");
+        }
+
+        _requestedMode = mode;
+
+        if (_appliedMode == mode)
+        {
+            _lastError = null;
             return false;
         }
 
         ApplyMode(_windowHandle, mode, $"switch overlay mode to {mode}");
-        Mode = mode;
+        _appliedMode = mode;
+        _lastError = null;
         return true;
     }
 
     public void Close()
     {
         _windowHandle = nint.Zero;
+        _appliedMode = null;
         _isClosed = true;
     }
 
@@ -93,9 +111,11 @@ internal sealed class OverlayWindowController : IOverlayWindowController
         }
         catch (Win32Exception exception)
         {
-            throw new OverlayWindowException(
-                $"Failed to {operation} because the current native style could not be read.",
-                exception);
+            ThrowOperationFailure(new OverlayWindowException(
+                $"Failed to {operation} because the current native style could not be read. " +
+                DescribeNativeError(exception),
+                exception));
+            return;
         }
 
         long desiredStyle = NativeWindowStyleBits.Add(currentStyle, PersistentStyles);
@@ -114,9 +134,11 @@ internal sealed class OverlayWindowController : IOverlayWindowController
         }
         catch (Win32Exception exception)
         {
-            throw new OverlayWindowException(
-                $"Failed to {operation}; the style update was not confirmed.",
-                exception);
+            ThrowOperationFailure(new OverlayWindowException(
+                $"Failed to {operation}; the style update was not confirmed. " +
+                DescribeNativeError(exception),
+                exception));
+            return;
         }
 
         try
@@ -125,19 +147,20 @@ internal sealed class OverlayWindowController : IOverlayWindowController
         }
         catch (Win32Exception refreshException)
         {
-            RestorePreviousStyleOrThrow(
+            RestorePreviousStyleOrFault(
                 windowHandle,
                 currentStyle,
                 operation,
                 refreshException);
 
-            throw new OverlayWindowException(
-                $"Failed to {operation}; the previous native style was restored.",
-                refreshException);
+            ThrowOperationFailure(new OverlayWindowException(
+                $"Failed to {operation}; the previous native style was restored. " +
+                DescribeNativeError(refreshException),
+                refreshException));
         }
     }
 
-    private void RestorePreviousStyleOrThrow(
+    private void RestorePreviousStyleOrFault(
         nint windowHandle,
         long previousStyle,
         string operation,
@@ -150,10 +173,38 @@ internal sealed class OverlayWindowController : IOverlayWindowController
         }
         catch (Win32Exception rollbackException)
         {
-            throw new OverlayWindowException(
+            var exception = new OverlayWindowException(
                 $"Failed to {operation}, and restoring the previous style also failed. " +
-                "The native window style is unknown.",
+                "The native window style is unknown. " +
+                $"Original {DescribeNativeError(originalException)} " +
+                $"Rollback {DescribeNativeError(rollbackException)}",
                 new AggregateException(originalException, rollbackException));
+
+            _isFaulted = true;
+            _appliedMode = null;
+            _lastError = exception.Message;
+            throw exception;
         }
+    }
+
+    private void ThrowIfFaulted()
+    {
+        if (_isFaulted)
+        {
+            throw new OverlayWindowException(
+                "The overlay window controller is faulted because its native style is unknown.",
+                new InvalidOperationException(_lastError));
+        }
+    }
+
+    private void ThrowOperationFailure(OverlayWindowException exception)
+    {
+        _lastError = exception.Message;
+        throw exception;
+    }
+
+    private static string DescribeNativeError(Win32Exception exception)
+    {
+        return $"Win32 error {exception.NativeErrorCode}: {exception.Message}";
     }
 }

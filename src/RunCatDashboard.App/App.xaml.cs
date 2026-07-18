@@ -44,6 +44,16 @@ public partial class App : Application
             _ => new WpfUiDispatcher(Current.Dispatcher));
         services.AddSingleton<IOverlayWindowController>(
             _ => new OverlayWindowController(new Win32NativeWindowStyleApi()));
+        services.AddSingleton<IOverlayModeCoordinator>(provider =>
+            new OverlayModeCoordinator(
+                provider.GetRequiredService<IOverlayWindowController>()));
+        services.AddSingleton<IGlobalHotKeyController>(
+            _ => new GlobalHotKeyController(new Win32GlobalHotKeyApi()));
+        services.AddSingleton<IOverlayHotKeyMessageHandler>(provider =>
+            new OverlayHotKeyMessageHandler(
+                provider.GetRequiredService<IGlobalHotKeyController>(),
+                provider.GetRequiredService<IOverlayModeCoordinator>()));
+        services.AddSingleton<IWindowWorkAreaProvider, Win32WindowWorkAreaProvider>();
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<MainWindow>();
     }
