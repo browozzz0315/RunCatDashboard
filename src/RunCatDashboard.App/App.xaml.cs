@@ -13,28 +13,101 @@ namespace RunCatDashboard.App;
 /// </summary>
 public partial class App : Application
 {
-    private readonly ServiceProvider _serviceProvider;
+    private const string AlreadyRunningMessage = "RunCatDashboard 已在執行中。";
+
+    private readonly IApplicationInstanceGuard _instanceGuard;
+    private readonly ApplicationStartupCoordinator _startupCoordinator;
+    private ServiceProvider? _serviceProvider;
 
     public App()
+        : this(new WindowsApplicationInstanceGuard())
     {
-        var services = new ServiceCollection();
-        ConfigureServices(services);
-        _serviceProvider = services.BuildServiceProvider();
+    }
+
+    internal App(IApplicationInstanceGuard instanceGuard)
+    {
+        ArgumentNullException.ThrowIfNull(instanceGuard);
+        _instanceGuard = instanceGuard;
+        _startupCoordinator = new ApplicationStartupCoordinator(instanceGuard);
     }
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
+        try
+        {
+            ApplicationStartupDecision decision = _startupCoordinator.Coordinate(
+                StartPrimaryInstance,
+                ShowAlreadyRunningMessage);
+            if (decision == ApplicationStartupDecision.ExitSecondaryInstance)
+            {
+                Shutdown(0);
+            }
+        }
+        catch (ApplicationInstanceException exception)
+        {
+            MessageBox.Show(
+                $"RunCatDashboard 啟動失敗：{exception.Message}",
+                "RunCatDashboard",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Shutdown(1);
+        }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        List<Exception>? cleanupFailures = null;
+        try
+        {
+            _serviceProvider?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception exception)
+        {
+            (cleanupFailures ??= []).Add(exception);
+        }
+
+        try
+        {
+            _instanceGuard.Dispose();
+        }
+        catch (Exception exception)
+        {
+            (cleanupFailures ??= []).Add(exception);
+        }
+
+        if (cleanupFailures is not null)
+        {
+            e.ApplicationExitCode = 1;
+            MessageBox.Show(
+                $"RunCatDashboard 結束清理失敗：{string.Join(" ", cleanupFailures.Select(failure => failure.Message))}",
+                "RunCatDashboard",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+
+        base.OnExit(e);
+    }
+
+    private void StartPrimaryInstance()
+    {
+        var services = new ServiceCollection();
+        ConfigureServices(services);
+        _serviceProvider = services.BuildServiceProvider();
+
         var mainWindow = _serviceProvider.GetRequiredService<MainWindow>();
         MainWindow = mainWindow;
         mainWindow.Show();
     }
 
-    protected override void OnExit(ExitEventArgs e)
+    private static void ShowAlreadyRunningMessage()
     {
-        _serviceProvider.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        base.OnExit(e);
+        MessageBox.Show(
+            AlreadyRunningMessage,
+            "RunCatDashboard",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
     }
 
     private static void ConfigureServices(IServiceCollection services)
