@@ -59,6 +59,71 @@ public sealed class FullscreenObservationSourceTests
     }
 
     [Fact]
+    public void Observe_WhenForegroundIsShellWindow_ExcludesBeforeGeometry()
+    {
+        var native = CreateNative();
+        native.ShellWindow = ForegroundWindow;
+
+        FullscreenObservation result = CreateSource(native).Observe(OverlayWindow);
+
+        Assert.False(result.IsFullscreen);
+        Assert.Null(result.Fault);
+        Assert.Contains("shell window", result.ForegroundDiagnostic);
+        Assert.Equal(0, native.ClassNameReadCount);
+        Assert.Equal(0, native.DwmReadCount);
+    }
+
+    [Theory]
+    [InlineData("Progman")]
+    [InlineData("WorkerW")]
+    public void Observe_WhenForegroundClassIsDesktopShell_ExcludesBeforeGeometry(
+        string className)
+    {
+        var native = CreateNative();
+        native.ClassName = className;
+
+        FullscreenObservation result = CreateSource(native).Observe(OverlayWindow);
+
+        Assert.False(result.IsFullscreen);
+        Assert.Null(result.Fault);
+        Assert.Contains(className, result.ForegroundDiagnostic);
+        Assert.Equal(0, native.DwmReadCount);
+    }
+
+    [Theory]
+    [InlineData("CabinetWClass")]
+    [InlineData("Chrome_WidgetWin_1")]
+    public void Observe_WithNonDesktopFullscreenClass_StillUsesGeometry(
+        string className)
+    {
+        var native = CreateNative();
+        native.ClassName = className;
+
+        FullscreenObservation result = CreateSource(native).Observe(OverlayWindow);
+
+        Assert.True(result.IsFullscreen);
+        Assert.Null(result.Fault);
+        Assert.Contains(className, result.ForegroundDiagnostic);
+        Assert.Equal(1, native.DwmReadCount);
+    }
+
+    [Fact]
+    public void Observe_WhenClassNameReadFails_IsDiagnosticAndFailVisible()
+    {
+        var native = CreateNative();
+        native.ClassNameReadSucceeds = false;
+        native.ClassNameError = 1400;
+
+        FullscreenObservation result = CreateSource(native).Observe(OverlayWindow);
+
+        Assert.False(result.IsFullscreen);
+        Assert.False(result.IsOnOverlayMonitor);
+        Assert.Contains("class name", result.Fault);
+        Assert.Contains("1400", result.Fault);
+        Assert.Equal(0, native.DwmReadCount);
+    }
+
+    [Fact]
     public void Observe_WithFullscreenOnDifferentMonitor_ReportsDifferentMonitor()
     {
         var native = CreateNative();
@@ -137,6 +202,11 @@ public sealed class FullscreenObservationSourceTests
     {
         internal Dictionary<nint, MonitorSnapshot> Monitors { get; } = [];
         internal nint ForegroundWindow { get; set; }
+        internal nint ShellWindow { get; set; }
+        internal string ClassName { get; set; } = "Chrome_WidgetWin_1";
+        internal bool ClassNameReadSucceeds { get; set; } = true;
+        internal int ClassNameError { get; set; }
+        internal int ClassNameReadCount { get; private set; }
         internal bool IsVisible { get; set; } = true;
         internal bool IsMinimized { get; set; }
         internal bool DwmSucceeds { get; set; } = true;
@@ -149,6 +219,19 @@ public sealed class FullscreenObservationSourceTests
         internal int WindowRectReadCount { get; private set; }
 
         public nint GetForegroundWindow() => ForegroundWindow;
+
+        public nint GetShellWindow() => ShellWindow;
+
+        public bool TryGetWindowClassName(
+            nint windowHandle,
+            out string className,
+            out int errorCode)
+        {
+            ClassNameReadCount++;
+            className = ClassNameReadSucceeds ? ClassName : string.Empty;
+            errorCode = ClassNameError;
+            return ClassNameReadSucceeds;
+        }
 
         public bool IsWindowVisible(nint windowHandle) => IsVisible;
 

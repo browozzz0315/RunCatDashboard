@@ -13,4 +13,8 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Resource Include="Assets\RunCat\cat-frame-01.png;Assets\RunCat\cat-frame-02.png;Assets\RunCat\cat-frame-03.png;Assets\RunCat\cat-frame-04.png;Assets\RunCat\cat-frame-05.png;Assets\RunCat\cat-frame-06.png" />
+  </ItemGroup>
+
 </Project>

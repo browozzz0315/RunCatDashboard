@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text;
 using RunCatDashboard.App.Windowing;
 
 namespace RunCatDashboard.App.Interop;
@@ -7,6 +8,30 @@ namespace RunCatDashboard.App.Interop;
 internal sealed class Win32FullscreenApi : INativeFullscreenApi
 {
     public nint GetForegroundWindow() => NativeFullscreenMethods.GetForegroundWindow();
+
+    public nint GetShellWindow() => NativeFullscreenMethods.GetShellWindow();
+
+    public bool TryGetWindowClassName(
+        nint windowHandle,
+        out string className,
+        out int errorCode)
+    {
+        var buffer = new StringBuilder(256);
+        int length = NativeFullscreenMethods.GetClassName(
+            windowHandle,
+            buffer,
+            buffer.Capacity);
+        if (length == 0)
+        {
+            className = string.Empty;
+            errorCode = Marshal.GetLastPInvokeError();
+            return false;
+        }
+
+        className = buffer.ToString();
+        errorCode = 0;
+        return true;
+    }
 
     public bool IsWindowVisible(nint windowHandle) =>
         NativeFullscreenMethods.IsWindowVisible(windowHandle);

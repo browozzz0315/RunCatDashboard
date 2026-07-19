@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:views="clr-namespace:RunCatDashboard.App.Views"
         mc:Ignorable="d"
         Title="RunCatDashboard"
         Width="430"
@@ -15,6 +16,9 @@
         Topmost="True"
         WindowStartupLocation="Manual"
         WindowStyle="None">
+    <Window.Resources>
+        <views:RunCatFrameConverter x:Key="RunCatFrameConverter" />
+    </Window.Resources>
     <Border Margin="8"
             Padding="14"
             Background="{DynamicResource OverlayPanelBackgroundBrush}"
@@ -83,6 +87,46 @@
                                 Click="OnCloseButtonClick"
                                 Content="Close"
                                 Visibility="{Binding IsInteractive, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    </Grid>
+
+                    <Separator Margin="0,0,0,8" />
+
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="98" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="98"
+                                Height="66"
+                                Background="{DynamicResource OverlayRunCatBackgroundBrush}"
+                                BorderBrush="{DynamicResource OverlayBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="4">
+                            <Image Width="96"
+                                   Height="64"
+                                   RenderOptions.BitmapScalingMode="NearestNeighbor"
+                                   SnapsToDevicePixels="True"
+                                   Source="{Binding AnimationFrameIndex, Converter={StaticResource RunCatFrameConverter}}"
+                                   Stretch="Uniform" />
+                        </Border>
+                        <StackPanel Grid.Column="2"
+                                    VerticalAlignment="Center">
+                            <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
+                                       FontSize="16"
+                                       FontWeight="SemiBold"
+                                       Text="Run Cat" />
+                            <TextBlock Margin="0,3,0,0"
+                                       Foreground="{DynamicResource OverlaySecondaryTextBrush}"
+                                       Text="{Binding AnimationAverageCpuText, StringFormat='3-sample CPU: {0}'}" />
+                            <TextBlock Margin="0,2,0,0"
+                                       Foreground="{DynamicResource OverlayMutedTextBrush}"
+                                       Text="{Binding AnimationIntervalText}" />
+                            <TextBlock Margin="0,2,0,0"
+                                       Foreground="{DynamicResource OverlayErrorBrush}"
+                                       Text="{Binding AnimationErrorMessage}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
                     </Grid>
 
                     <Separator Margin="0,0,0,8" />

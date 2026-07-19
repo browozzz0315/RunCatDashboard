@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
@@ -373,14 +374,125 @@ public sealed class MainWindowViewModelTests
         Assert.Throws<ObjectDisposedException>(() => viewModel.Start());
     }
 
+    [Fact]
+    public async Task CpuSamples_UpdateAnimationFromNewestThreeSampleAverage()
+    {
+        var delay = new ControlledDelay();
+        var animation = new FakeAnimationController();
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(
+                Snapshot(10d),
+                Snapshot(20d),
+                Snapshot(30d),
+                Snapshot(90d)),
+            delay,
+            cpuHistoryCapacity: 30,
+            animationController: animation);
+        viewModel.Start();
+
+        await AdvanceToNextSampleAsync(delay);
+        await AdvanceToNextSampleAsync(delay);
+        await AdvanceToNextSampleAsync(delay);
+        await delay.WaitUntilDelayStartsAsync();
+
+        Assert.Equal("46.7%", viewModel.AnimationAverageCpuText);
+        Assert.Equal(TimeSpan.FromMilliseconds(156.66666666666669), animation.Interval);
+        Assert.Equal("157 ms/frame", viewModel.AnimationIntervalText);
+    }
+
+    [Fact]
+    public async Task InvalidCpuSamples_AreIgnoredAndOutOfRangeSamplesAreClampedForAnimation()
+    {
+        var delay = new ControlledDelay();
+        var animation = new FakeAnimationController();
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(
+                Snapshot(double.NaN),
+                Snapshot(-20d),
+                Snapshot(double.PositiveInfinity),
+                Snapshot(120d)),
+            delay,
+            animationController: animation);
+        viewModel.Start();
+
+        await AdvanceToNextSampleAsync(delay);
+        await AdvanceToNextSampleAsync(delay);
+        await AdvanceToNextSampleAsync(delay);
+        await delay.WaitUntilDelayStartsAsync();
+
+        Assert.Equal("50.0%", viewModel.AnimationAverageCpuText);
+        Assert.Equal(TimeSpan.FromMilliseconds(150), animation.Interval);
+        Assert.Equal(2, viewModel.CpuHistory.Count);
+    }
+
+    [Fact]
+    public async Task NoValidCpuSample_KeepsSafeAnimationDefault()
+    {
+        var delay = new ControlledDelay();
+        var animation = new FakeAnimationController();
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(Snapshot(null), Snapshot(double.NegativeInfinity)),
+            delay,
+            animationController: animation);
+        viewModel.Start();
+
+        await AdvanceToNextSampleAsync(delay);
+        await delay.WaitUntilDelayStartsAsync();
+
+        Assert.Equal("--", viewModel.AnimationAverageCpuText);
+        Assert.Equal(TimeSpan.FromMilliseconds(250), animation.Interval);
+        Assert.Equal("250 ms/frame", viewModel.AnimationIntervalText);
+    }
+
+    [Fact]
+    public async Task AnimationVisibility_HiddenStopsAndVisibleRestartsWithoutResettingFrame()
+    {
+        var animation = new FakeAnimationController();
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(),
+            new ControlledDelay(),
+            animationController: animation);
+        viewModel.SetAnimationVisibility(true);
+        animation.PublishFrame(4);
+
+        viewModel.SetAnimationVisibility(false);
+        viewModel.SetAnimationVisibility(false);
+        viewModel.SetAnimationVisibility(true);
+
+        Assert.True(viewModel.IsAnimationRunning);
+        Assert.Equal(4, viewModel.AnimationFrameIndex);
+        Assert.Equal(2, animation.StartCount);
+        Assert.Equal(2, animation.StopCount);
+    }
+
+    [Fact]
+    public async Task AnimationFault_IsExposedAndDisposeUnsubscribesAndCleansController()
+    {
+        var animation = new FakeAnimationController();
+        var viewModel = CreateViewModel(
+            new SequenceMetricsService(),
+            new ControlledDelay(),
+            animationController: animation);
+        animation.PublishFault("configured animation failure");
+
+        await viewModel.DisposeAsync();
+        animation.PublishFrame(3);
+
+        Assert.Equal("configured animation failure", viewModel.AnimationErrorMessage);
+        Assert.Equal(0, viewModel.AnimationFrameIndex);
+        Assert.Equal(1, animation.DisposeCount);
+    }
+
     private static MainWindowViewModel CreateViewModel(
         ISystemMetricsService service,
         ControlledDelay delay,
-        int cpuHistoryCapacity = 3)
+        int cpuHistoryCapacity = 3,
+        FakeAnimationController? animationController = null)
     {
         return new MainWindowViewModel(
             service,
             new ImmediateUiDispatcher(),
+            animationController ?? new FakeAnimationController(),
             cpuHistoryCapacity,
             TimeSpan.FromSeconds(1),
             delay.DelayAsync);
@@ -415,6 +527,68 @@ public sealed class MainWindowViewModelTests
             cancellationToken.ThrowIfCancellationRequested();
             action();
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class FakeAnimationController : IRunCatAnimationController
+    {
+        public int FrameCount => 6;
+        public int FrameIndex { get; private set; }
+        public TimeSpan Interval { get; private set; } = TimeSpan.FromMilliseconds(250);
+        public bool IsRunning { get; private set; }
+        public string? LastFault { get; private set; }
+        internal int StartCount { get; private set; }
+        internal int StopCount { get; private set; }
+        internal int DisposeCount { get; private set; }
+
+        public event Action<int>? FrameChanged;
+        public event Action<string>? Faulted;
+
+        public bool Start()
+        {
+            StartCount++;
+            if (IsRunning)
+            {
+                return false;
+            }
+
+            IsRunning = true;
+            return true;
+        }
+
+        public void Stop()
+        {
+            StopCount++;
+            IsRunning = false;
+        }
+
+        public bool UpdateInterval(TimeSpan interval)
+        {
+            if (Interval == interval)
+            {
+                return false;
+            }
+
+            Interval = interval;
+            return true;
+        }
+
+        public void Dispose()
+        {
+            DisposeCount++;
+            IsRunning = false;
+        }
+
+        internal void PublishFrame(int frameIndex)
+        {
+            FrameIndex = frameIndex;
+            FrameChanged?.Invoke(frameIndex);
+        }
+
+        internal void PublishFault(string message)
+        {
+            LastFault = message;
+            Faulted?.Invoke(message);
         }
     }
 

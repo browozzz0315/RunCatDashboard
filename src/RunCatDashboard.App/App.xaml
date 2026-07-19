@@ -12,5 +12,6 @@
         <SolidColorBrush x:Key="OverlayErrorBrush" Color="#FFFF8A80" />
         <SolidColorBrush x:Key="OverlayModeBackgroundBrush" Color="#FF394453" />
         <SolidColorBrush x:Key="OverlayHistoryBackgroundBrush" Color="#402F3742" />
+        <SolidColorBrush x:Key="OverlayRunCatBackgroundBrush" Color="#FFD8DEE9" />
     </Application.Resources>
 </Application>
