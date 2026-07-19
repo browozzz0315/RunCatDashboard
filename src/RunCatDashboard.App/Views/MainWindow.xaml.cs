@@ -115,6 +115,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _isClosed = true;
+        _viewModel.SetAnimationVisibility(false);
         Loaded -= OnLoaded;
         LocationChanged -= OnOverlayLocationChanged;
         _viewModel.DisplayPolicyRequested -= OnDisplayPolicyRequested;
@@ -142,6 +143,7 @@ public partial class MainWindow : Window
     {
         Loaded -= OnLoaded;
         _viewModel.Start();
+        _viewModel.SetAnimationVisibility(true);
     }
 
     private bool TryInstallMessageHook()
@@ -378,9 +380,11 @@ public partial class MainWindow : Window
             {
                 Show();
                 _isPolicyHidden = false;
+                _viewModel.SetAnimationVisibility(true);
             }
             else if (!state.IsVisible && !_isPolicyHidden)
             {
+                _viewModel.SetAnimationVisibility(false);
                 Hide();
                 _isPolicyHidden = true;
             }
@@ -404,12 +408,15 @@ public partial class MainWindow : Window
             {
                 Show();
                 _isPolicyHidden = false;
+                _viewModel.SetAnimationVisibility(true);
             }
         }
         catch (Exception exception)
         {
             effectiveFault += $" Restoring fail-visible state also failed: {exception.Message}";
         }
+
+        _viewModel.SetAnimationVisibility(!_isPolicyHidden);
 
         _viewModel.ApplyDisplayPolicyState(_displayMonitor.State with
         {

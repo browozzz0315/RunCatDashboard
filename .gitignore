@@ -492,6 +492,10 @@ publish/
 .codex-local/
 .headroom-local/
 
+# Local RunCat reference and image-working folders
+/cats/
+/assets/
+
 # Windows
 Thumbs.db
 Desktop.ini

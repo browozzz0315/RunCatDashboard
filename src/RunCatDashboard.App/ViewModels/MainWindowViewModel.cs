@@ -1,5 +1,6 @@
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
+using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Collections;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
@@ -15,6 +16,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
     private readonly ISystemMetricsService _systemMetricsService;
     private readonly IUiDispatcher _uiDispatcher;
+    private readonly IRunCatAnimationController _animationController;
     private readonly BoundedHistory<SystemMetricsSnapshot> _cpuHistoryBuffer;
     private readonly TimeSpan _samplingInterval;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
@@ -50,6 +52,21 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
     [ObservableProperty]
     private string? _errorMessage;
+
+    [ObservableProperty]
+    private int _animationFrameIndex;
+
+    [ObservableProperty]
+    private bool _isAnimationRunning;
+
+    [ObservableProperty]
+    private string _animationAverageCpuText = "--";
+
+    [ObservableProperty]
+    private string _animationIntervalText = "250 ms/frame";
+
+    [ObservableProperty]
+    private string? _animationErrorMessage;
 
     [ObservableProperty]
     private OverlayInteractionMode _overlayMode = OverlayInteractionMode.ClickThrough;
@@ -142,10 +159,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
     public MainWindowViewModel(
         ISystemMetricsService systemMetricsService,
-        IUiDispatcher uiDispatcher)
+        IUiDispatcher uiDispatcher,
+        IRunCatAnimationController animationController)
         : this(
             systemMetricsService,
             uiDispatcher,
+            animationController,
             DefaultCpuHistoryCapacity,
             DefaultSamplingInterval,
             Task.Delay)
@@ -155,20 +174,26 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     internal MainWindowViewModel(
         ISystemMetricsService systemMetricsService,
         IUiDispatcher uiDispatcher,
+        IRunCatAnimationController animationController,
         int cpuHistoryCapacity,
         TimeSpan samplingInterval,
         Func<TimeSpan, CancellationToken, Task> delayAsync)
     {
         ArgumentNullException.ThrowIfNull(systemMetricsService);
         ArgumentNullException.ThrowIfNull(uiDispatcher);
+        ArgumentNullException.ThrowIfNull(animationController);
         ArgumentNullException.ThrowIfNull(delayAsync);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(samplingInterval, TimeSpan.Zero);
 
         _systemMetricsService = systemMetricsService;
         _uiDispatcher = uiDispatcher;
+        _animationController = animationController;
         _cpuHistoryBuffer = new BoundedHistory<SystemMetricsSnapshot>(cpuHistoryCapacity);
         _samplingInterval = samplingInterval;
         _delayAsync = delayAsync;
+        _animationController.FrameChanged += OnAnimationFrameChanged;
+        _animationController.Faulted += OnAnimationFaulted;
+        _animationController.UpdateInterval(CpuAnimationSpeedMapper.SlowestInterval);
     }
 
     internal void ApplyOverlayState(
@@ -277,7 +302,37 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
             _isDisposed = true;
         }
 
+        _animationController.FrameChanged -= OnAnimationFrameChanged;
+        _animationController.Faulted -= OnAnimationFaulted;
+        _animationController.Dispose();
         await StopAsync().ConfigureAwait(false);
+    }
+
+    internal void SetAnimationVisibility(bool isVisible)
+    {
+        if (_isDisposed)
+        {
+            return;
+        }
+
+        try
+        {
+            if (isVisible)
+            {
+                _animationController.Start();
+            }
+            else
+            {
+                _animationController.Stop();
+            }
+
+            IsAnimationRunning = _animationController.IsRunning;
+        }
+        catch (Exception exception)
+        {
+            AnimationErrorMessage = $"Run-cat animation lifecycle failed: {exception.Message}";
+            IsAnimationRunning = _animationController.IsRunning;
+        }
     }
 
     private async Task RunSamplingLoopAsync(CancellationToken cancellationToken)
@@ -328,7 +383,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
     private void ApplySuccessfulSample(SystemMetricsSnapshot snapshot)
     {
-        CpuUsageText = snapshot.CpuUsagePercent is double cpuUsage
+        CpuUsageText = snapshot.CpuUsagePercent is double cpuUsage && double.IsFinite(cpuUsage)
             ? string.Create(CultureInfo.InvariantCulture, $"{cpuUsage:F1}%")
             : "--";
         MemoryUsageText = string.Create(
@@ -341,16 +396,47 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
             "yyyy-MM-dd HH:mm:ss zzz",
             CultureInfo.InvariantCulture);
 
-        if (snapshot.CpuUsagePercent.HasValue)
+        if (snapshot.CpuUsagePercent is double finiteCpuUsage &&
+            double.IsFinite(finiteCpuUsage))
         {
             _cpuHistoryBuffer.Add(snapshot);
             CpuHistory = _cpuHistoryBuffer.GetSnapshot();
         }
 
+        UpdateAnimationSpeed();
+
         ErrorMessage = null;
-        SamplingStatus = snapshot.CpuUsagePercent.HasValue
+        SamplingStatus = snapshot.CpuUsagePercent is double currentCpuUsage &&
+                         double.IsFinite(currentCpuUsage)
             ? "Sampling"
             : "Waiting for the next CPU sample";
+    }
+
+    private void UpdateAnimationSpeed()
+    {
+        double? averageCpu = RecentCpuSampleAverager.Average(
+            _cpuHistoryBuffer
+                .GetSnapshot()
+                .Select(snapshot => snapshot.CpuUsagePercent));
+        TimeSpan interval = CpuAnimationSpeedMapper.Map(averageCpu);
+
+        _animationController.UpdateInterval(interval);
+        AnimationAverageCpuText = averageCpu.HasValue
+            ? string.Create(CultureInfo.InvariantCulture, $"{averageCpu.Value:F1}%")
+            : "--";
+        AnimationIntervalText = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{interval.TotalMilliseconds:F0} ms/frame");
+    }
+
+    private void OnAnimationFrameChanged(int frameIndex)
+    {
+        AnimationFrameIndex = frameIndex;
+    }
+
+    private void OnAnimationFaulted(string message)
+    {
+        AnimationErrorMessage = message;
     }
 
     private void ApplySamplingError(Exception exception)

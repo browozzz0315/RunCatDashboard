@@ -15,6 +15,13 @@ internal interface INativeFullscreenApi
 {
     nint GetForegroundWindow();
 
+    nint GetShellWindow();
+
+    bool TryGetWindowClassName(
+        nint windowHandle,
+        out string className,
+        out int errorCode);
+
     bool IsWindowVisible(nint windowHandle);
 
     bool IsWindowMinimized(nint windowHandle);
@@ -76,6 +83,33 @@ internal sealed class FullscreenObservationSource : IFullscreenObservationSource
         if (foregroundWindow == overlayWindowHandle)
         {
             return Excluded("Foreground is the overlay window", overlayDiagnostic);
+        }
+
+        nint shellWindow = _nativeApi.GetShellWindow();
+        if (shellWindow != nint.Zero && foregroundWindow == shellWindow)
+        {
+            return Excluded(
+                $"Foreground HWND {FormatWindowHandle(foregroundWindow)} is the Windows shell window",
+                overlayDiagnostic);
+        }
+
+        if (!_nativeApi.TryGetWindowClassName(
+                foregroundWindow,
+                out string foregroundClassName,
+                out int classNameError))
+        {
+            return Fault(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Reading foreground HWND {FormatWindowHandle(foregroundWindow)} class name failed with Win32 error {classNameError}."),
+                overlayDiagnostic);
+        }
+
+        if (foregroundClassName is "Progman" or "WorkerW")
+        {
+            return Excluded(
+                $"Foreground HWND {FormatWindowHandle(foregroundWindow)} class {foregroundClassName} is a Windows desktop shell window",
+                overlayDiagnostic);
         }
 
         if (!_nativeApi.IsWindowVisible(foregroundWindow))
@@ -140,7 +174,7 @@ internal sealed class FullscreenObservationSource : IFullscreenObservationSource
         return new FullscreenObservation(
             fullscreen,
             sameMonitor,
-            $"Foreground {foregroundBounds} on monitor {foregroundMonitor.Bounds} via {boundsSource}",
+            $"Foreground HWND {FormatWindowHandle(foregroundWindow)} class {foregroundClassName} {foregroundBounds} on monitor {foregroundMonitor.Bounds} via {boundsSource}",
             overlayDiagnostic,
             null);
     }
@@ -160,5 +194,12 @@ internal sealed class FullscreenObservationSource : IFullscreenObservationSource
             "Foreground not evaluated",
             overlayDiagnostic,
             fault);
+    }
+
+    private static string FormatWindowHandle(nint windowHandle)
+    {
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"0x{windowHandle.ToInt64():X}");
     }
 }

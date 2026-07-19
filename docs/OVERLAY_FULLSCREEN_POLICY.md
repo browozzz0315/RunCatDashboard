@@ -26,11 +26,12 @@ Overlay 提供三態、僅限本次執行期間的顯示政策：
 
 1. 以 Overlay HWND 的 `MonitorFromWindow` 決定 Overlay monitor。
 2. 排除無 foreground HWND、Overlay 自身、不可見或 minimized foreground window。
-3. 優先讀取 DWM extended frame bounds。
-4. DWM 失敗時 fallback `GetWindowRect`。
-5. 以 foreground HWND 決定 foreground monitor。
-6. 使用完整 `rcMonitor` 比較 bounds，不使用定位用途的 `rcWork`。
-7. 邊界容許值固定為 2 physical pixels，支援負座標與多 monitor。
+3. 在 geometry 判定前排除 `GetShellWindow()` HWND，以及 class name 為 `Progman`／`WorkerW` 的 Windows desktop shell 視窗；不依 process name 排除一般檔案總管視窗。
+4. 優先讀取 DWM extended frame bounds。
+5. DWM 失敗時 fallback `GetWindowRect`。
+6. 以 foreground HWND 決定 foreground monitor。
+7. 使用完整 `rcMonitor` 比較 bounds，不使用定位用途的 `rcWork`。
+8. 邊界容許值固定為 2 physical pixels，支援負座標與多 monitor。
 
 DWM 與 fallback 均失敗、monitor 查詢失敗或 callback／timer／dispatcher／政策套用失敗時，保留可診斷 fault 並採 fail-visible。後續成功 observation 會清除 transient observation/application fault，恢復正常 applied state。
 

@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
+using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Views;
@@ -115,6 +116,11 @@ public partial class App : Application
         services.AddSingleton<ISystemMetricsService, WindowsSystemMetricsService>();
         services.AddSingleton<IUiDispatcher>(
             _ => new WpfUiDispatcher(Current.Dispatcher));
+        services.AddSingleton<IAnimationTimer>(
+            _ => new DispatcherAnimationTimer(Current.Dispatcher));
+        services.AddSingleton<IRunCatAnimationController>(provider =>
+            new RunCatAnimationController(
+                provider.GetRequiredService<IAnimationTimer>()));
         services.AddSingleton<IOverlayWindowController>(
             _ => new OverlayWindowController(new Win32NativeWindowStyleApi()));
         services.AddSingleton<IOverlayModeCoordinator>(provider =>

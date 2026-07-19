@@ -8,7 +8,7 @@ namespace RunCatDashboard.Tests.ViewModels;
 public sealed class ViewModelArchitectureTests
 {
     [Fact]
-    public void MainWindowViewModel_HasNoWpfWindowHwndSourceOrPInvokeDependency()
+    public void MainWindowViewModel_HasNoWpfControlsTimersHandlesOrPInvokeDependency()
     {
         Type viewModelType = typeof(MainWindowViewModel);
         Type[] referencedTypes = viewModelType
@@ -23,6 +23,10 @@ public sealed class ViewModelArchitectureTests
             .ToArray();
 
         Assert.DoesNotContain(referencedTypes, type => type.FullName == "System.Windows.Window");
+        Assert.DoesNotContain(referencedTypes, type => type.FullName == "System.Windows.Controls.Control");
+        Assert.DoesNotContain(referencedTypes, type => type.FullName == "System.Windows.Controls.Image");
+        Assert.DoesNotContain(referencedTypes, type => type.FullName == "System.Windows.Media.Imaging.BitmapImage");
+        Assert.DoesNotContain(referencedTypes, type => type.FullName == "System.Windows.Threading.DispatcherTimer");
         Assert.DoesNotContain(referencedTypes, type => type.FullName == "System.Windows.Interop.HwndSource");
         Assert.DoesNotContain(referencedTypes, type => type == typeof(nint));
         Assert.DoesNotContain(referencedTypes, type => type == typeof(Mutex));
