@@ -6,13 +6,14 @@ using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Views;
 using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Windowing;
+using MessageBox = System.Windows.MessageBox;
 
 namespace RunCatDashboard.App;
 
 /// <summary>
 /// Interaction logic for App.xaml
 /// </summary>
-public partial class App : Application
+public partial class App : System.Windows.Application
 {
     private const string AlreadyRunningMessage = "RunCatDashboard 已在執行中。";
 
@@ -126,12 +127,30 @@ public partial class App : Application
         services.AddSingleton<IOverlayModeCoordinator>(provider =>
             new OverlayModeCoordinator(
                 provider.GetRequiredService<IOverlayWindowController>()));
+        services.AddSingleton<IInteractionModeToggleAction>(provider =>
+            new InteractionModeToggleAction(
+                provider.GetRequiredService<IUiDispatcher>(),
+                provider.GetRequiredService<IOverlayModeCoordinator>()));
+        services.AddSingleton<IWindowVisibilityCoordinator>(
+            _ => new WindowVisibilityCoordinator());
+        services.AddSingleton<IApplicationExitCoordinator>(
+            _ => new ApplicationExitCoordinator());
         services.AddSingleton<IGlobalHotKeyController>(
             _ => new GlobalHotKeyController(new Win32GlobalHotKeyApi()));
         services.AddSingleton<IOverlayHotKeyMessageHandler>(provider =>
             new OverlayHotKeyMessageHandler(
                 provider.GetRequiredService<IGlobalHotKeyController>(),
-                provider.GetRequiredService<IOverlayModeCoordinator>()));
+                provider.GetRequiredService<IInteractionModeToggleAction>(),
+                provider.GetRequiredService<IWindowVisibilityCoordinator>()));
+        services.AddSingleton<ITrayIconAdapter>(
+            _ => new NotifyIconTrayAdapter(new AssemblyTrayIconResourceLoader()));
+        services.AddSingleton<ISystemTrayService>(provider =>
+            new SystemTrayService(
+                provider.GetRequiredService<ITrayIconAdapter>(),
+                new Win32RegisteredWindowMessageApi(),
+                provider.GetRequiredService<IWindowVisibilityCoordinator>(),
+                provider.GetRequiredService<IInteractionModeToggleAction>(),
+                provider.GetRequiredService<IApplicationExitCoordinator>()));
         services.AddSingleton<IWindowWorkAreaProvider, Win32WindowWorkAreaProvider>();
         services.AddSingleton<IOverlayDisplayMonitor>(
             _ => new OverlayDisplayMonitor(

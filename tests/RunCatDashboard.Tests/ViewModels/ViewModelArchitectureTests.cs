@@ -28,6 +28,9 @@ public sealed class ViewModelArchitectureTests
         Assert.DoesNotContain(referencedTypes, type => type.FullName == "System.Windows.Media.Imaging.BitmapImage");
         Assert.DoesNotContain(referencedTypes, type => type.FullName == "System.Windows.Threading.DispatcherTimer");
         Assert.DoesNotContain(referencedTypes, type => type.FullName == "System.Windows.Interop.HwndSource");
+        Assert.DoesNotContain(
+            referencedTypes,
+            type => type.FullName == "System.Windows.Forms.NotifyIcon");
         Assert.DoesNotContain(referencedTypes, type => type == typeof(nint));
         Assert.DoesNotContain(referencedTypes, type => type == typeof(Mutex));
         Assert.DoesNotContain(referencedTypes, type => type.FullName == "System.Diagnostics.Process");
@@ -35,5 +38,22 @@ public sealed class ViewModelArchitectureTests
         Assert.DoesNotContain(
             viewModelType.GetMethods(BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
             method => method.GetCustomAttribute<DllImportAttribute>() is not null);
+    }
+
+    [Fact]
+    public void NativeDeclarations_AreConfinedToInteropNamespace()
+    {
+        Type[] declaringTypes = typeof(MainWindowViewModel).Assembly
+            .GetTypes()
+            .Where(type => type
+                .GetMethods(BindingFlags.Static | BindingFlags.Instance |
+                    BindingFlags.Public | BindingFlags.NonPublic)
+                .Any(method => method.GetCustomAttribute<DllImportAttribute>() is not null))
+            .ToArray();
+
+        Assert.NotEmpty(declaringTypes);
+        Assert.All(
+            declaringTypes,
+            type => Assert.Equal("RunCatDashboard.App.Interop", type.Namespace));
     }
 }

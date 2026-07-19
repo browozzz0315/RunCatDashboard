@@ -2,7 +2,7 @@ namespace RunCatDashboard.App.Windowing;
 
 internal sealed class ReconciliationTimer : IReconciliationTimer
 {
-    private Timer? _timer;
+    private System.Threading.Timer? _timer;
     private Action? _callback;
     private Action<string>? _faultCallback;
     private bool _isDisposed;
@@ -24,7 +24,7 @@ internal sealed class ReconciliationTimer : IReconciliationTimer
 
         _callback = callback;
         _faultCallback = faultCallback;
-        _timer = new Timer(
+        _timer = new System.Threading.Timer(
             OnTick,
             null,
             interval,
@@ -34,7 +34,7 @@ internal sealed class ReconciliationTimer : IReconciliationTimer
 
     public void Stop()
     {
-        Timer? timer = Interlocked.Exchange(ref _timer, null);
+        System.Threading.Timer? timer = Interlocked.Exchange(ref _timer, null);
         timer?.Dispose();
         _callback = null;
         _faultCallback = null;

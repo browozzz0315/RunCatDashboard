@@ -9,127 +9,134 @@ public sealed class GlobalHotKeyControllerTests
     private static readonly nint WindowHandle = new(4321);
 
     [Fact]
-    public void Register_WithValidHandle_RegistersFixedGesture()
+    public void RegisterAll_RegistersDistinctRAndDHotKeysOnce()
     {
-        var nativeApi = new FakeNativeGlobalHotKeyApi();
-        var controller = new GlobalHotKeyController(nativeApi);
+        var native = new FakeNativeGlobalHotKeyApi();
+        var controller = new GlobalHotKeyController(native);
 
-        bool registered = controller.Register(WindowHandle);
+        IReadOnlyList<GlobalHotKeyRegistrationState> first =
+            controller.RegisterAll(WindowHandle);
+        IReadOnlyList<GlobalHotKeyRegistrationState> second =
+            controller.RegisterAll(WindowHandle);
 
-        Assert.True(registered);
-        Assert.True(controller.IsRegistered);
-        Assert.Equal("Ctrl + Alt + Shift + R", controller.GestureText);
-        Assert.Equal(1, nativeApi.RegisterCount);
-        Assert.Equal(GlobalHotKeyController.HotKeyIdentifier, nativeApi.Identifier);
-        Assert.Equal(GlobalHotKeyController.HotKeyModifiers, nativeApi.Modifiers);
-        Assert.Equal(GlobalHotKeyController.VirtualKeyR, nativeApi.VirtualKey);
+        Assert.Equal(2, native.RegisterCalls.Count);
+        Assert.Equal(2, first.Count(state => state.IsRegistered));
+        Assert.Equal(first, second);
+        Assert.NotEqual(
+            GlobalHotKeyController.InteractionHotKeyIdentifier,
+            GlobalHotKeyController.VisibilityHotKeyIdentifier);
+        Assert.Contains(native.RegisterCalls, call =>
+            call.Identifier == GlobalHotKeyController.InteractionHotKeyIdentifier &&
+            call.VirtualKey == GlobalHotKeyController.VirtualKeyR);
+        Assert.Contains(native.RegisterCalls, call =>
+            call.Identifier == GlobalHotKeyController.VisibilityHotKeyIdentifier &&
+            call.VirtualKey == GlobalHotKeyController.VirtualKeyD);
+        Assert.All(native.RegisterCalls, call =>
+            Assert.Equal(GlobalHotKeyController.HotKeyModifiers, call.Modifiers));
     }
 
     [Fact]
-    public void Register_WhenAlreadyRegistered_IsIdempotent()
+    public void RegisterAll_WhenOneRegistrationFails_PreservesOtherAndFaultDetails()
     {
-        var nativeApi = new FakeNativeGlobalHotKeyApi();
-        var controller = new GlobalHotKeyController(nativeApi);
-        controller.Register(WindowHandle);
+        var native = new FakeNativeGlobalHotKeyApi();
+        native.RegisterFailures[GlobalHotKeyController.VisibilityHotKeyIdentifier] =
+            new Win32Exception(1409, "Hot key is already registered.");
+        var controller = new GlobalHotKeyController(native);
 
-        bool registered = controller.Register(WindowHandle);
+        IReadOnlyList<GlobalHotKeyRegistrationState> states =
+            controller.RegisterAll(WindowHandle);
 
-        Assert.False(registered);
-        Assert.Equal(1, nativeApi.RegisterCount);
+        GlobalHotKeyRegistrationState interaction = states.Single(state =>
+            state.Action == GlobalHotKeyAction.ToggleInteractionMode);
+        GlobalHotKeyRegistrationState visibility = states.Single(state =>
+            state.Action == GlobalHotKeyAction.ToggleDashboardVisibility);
+        Assert.True(interaction.IsRegistered);
+        Assert.False(visibility.IsRegistered);
+        Assert.Equal(1409, visibility.NativeErrorCode);
+        Assert.Equal(
+            "顯示／隱藏快捷鍵註冊失敗，可能已被其他程式使用。",
+            visibility.Fault);
     }
 
     [Fact]
-    public void Register_WhenNativeRegistrationFails_HasUnderstandableError()
+    public void TryGetAction_DispatchesOnlySuccessfullyRegisteredIdentifier()
     {
-        var nativeApi = new FakeNativeGlobalHotKeyApi
-        {
-            RegisterException = new Win32Exception(1409, "Hot key is already registered.")
-        };
-        var controller = new GlobalHotKeyController(nativeApi);
+        var native = new FakeNativeGlobalHotKeyApi();
+        native.RegisterFailures[GlobalHotKeyController.VisibilityHotKeyIdentifier] =
+            new Win32Exception(1409);
+        var controller = new GlobalHotKeyController(native);
+        controller.RegisterAll(WindowHandle);
 
-        GlobalHotKeyException exception = Assert.Throws<GlobalHotKeyException>(
-            () => controller.Register(WindowHandle));
-
-        Assert.Contains("Ctrl + Alt + Shift + R", exception.Message);
-        Assert.Contains("already be in use", exception.Message);
-        Assert.IsType<Win32Exception>(exception.InnerException);
-        Assert.False(controller.IsRegistered);
-        Assert.Equal(exception.Message, controller.LastError);
+        Assert.True(controller.TryGetAction(
+            GlobalHotKeyController.WindowMessageHotKey,
+            new nint(GlobalHotKeyController.InteractionHotKeyIdentifier),
+            out GlobalHotKeyAction action));
+        Assert.Equal(GlobalHotKeyAction.ToggleInteractionMode, action);
+        Assert.False(controller.TryGetAction(
+            GlobalHotKeyController.WindowMessageHotKey,
+            new nint(GlobalHotKeyController.VisibilityHotKeyIdentifier),
+            out _));
     }
 
     [Fact]
-    public void Unregister_AfterRegistration_CallsNativeAndClearsState()
+    public void Dispose_UnregistersOnlySuccessfulRegistrationsAndIsIdempotent()
     {
-        var nativeApi = new FakeNativeGlobalHotKeyApi();
-        var controller = new GlobalHotKeyController(nativeApi);
-        controller.Register(WindowHandle);
+        var native = new FakeNativeGlobalHotKeyApi();
+        native.RegisterFailures[GlobalHotKeyController.VisibilityHotKeyIdentifier] =
+            new Win32Exception(1409);
+        var controller = new GlobalHotKeyController(native);
+        controller.RegisterAll(WindowHandle);
 
-        bool unregistered = controller.Unregister();
+        controller.Dispose();
+        controller.Dispose();
 
-        Assert.True(unregistered);
-        Assert.False(controller.IsRegistered);
-        Assert.Equal(1, nativeApi.UnregisterCount);
-        Assert.Null(controller.LastError);
+        Assert.Equal(
+            [GlobalHotKeyController.InteractionHotKeyIdentifier],
+            native.UnregisterCalls);
     }
 
     [Fact]
-    public void Close_AfterRegistration_UnregistersHotKey()
+    public void Dispose_WhenUnregisterFails_RetainsDiagnosticWithoutThrowing()
     {
-        var nativeApi = new FakeNativeGlobalHotKeyApi();
-        var controller = new GlobalHotKeyController(nativeApi);
-        controller.Register(WindowHandle);
+        var native = new FakeNativeGlobalHotKeyApi();
+        native.UnregisterFailures[GlobalHotKeyController.InteractionHotKeyIdentifier] =
+            new Win32Exception(5, "Access denied.");
+        var controller = new GlobalHotKeyController(native);
+        controller.RegisterAll(WindowHandle);
 
-        controller.Close();
-        controller.Close();
+        Exception? exception = Record.Exception(controller.Dispose);
 
-        Assert.False(controller.IsRegistered);
-        Assert.Equal(1, nativeApi.UnregisterCount);
-    }
-
-    [Fact]
-    public void Unregister_WhenRepeated_IsSafeAndSkipsNativeCall()
-    {
-        var nativeApi = new FakeNativeGlobalHotKeyApi();
-        var controller = new GlobalHotKeyController(nativeApi);
-        controller.Register(WindowHandle);
-        controller.Unregister();
-
-        bool unregistered = controller.Unregister();
-
-        Assert.False(unregistered);
-        Assert.Equal(1, nativeApi.UnregisterCount);
+        Assert.Null(exception);
+        GlobalHotKeyRegistrationState state = controller.Registrations.Single(item =>
+            item.Action == GlobalHotKeyAction.ToggleInteractionMode);
+        Assert.True(state.IsRegistered);
+        Assert.Equal(5, state.NativeErrorCode);
+        Assert.Contains("解除快捷鍵", state.Fault);
     }
 
     private sealed class FakeNativeGlobalHotKeyApi : INativeGlobalHotKeyApi
     {
-        internal Win32Exception? RegisterException { get; init; }
-
-        internal int RegisterCount { get; private set; }
-
-        internal int UnregisterCount { get; private set; }
-
-        internal int Identifier { get; private set; }
-
-        internal uint Modifiers { get; private set; }
-
-        internal uint VirtualKey { get; private set; }
+        internal List<(int Identifier, uint Modifiers, uint VirtualKey)> RegisterCalls { get; } = [];
+        internal List<int> UnregisterCalls { get; } = [];
+        internal Dictionary<int, Win32Exception> RegisterFailures { get; } = [];
+        internal Dictionary<int, Win32Exception> UnregisterFailures { get; } = [];
 
         public void Register(nint windowHandle, int identifier, uint modifiers, uint virtualKey)
         {
-            RegisterCount++;
-            if (RegisterException is not null)
+            RegisterCalls.Add((identifier, modifiers, virtualKey));
+            if (RegisterFailures.TryGetValue(identifier, out Win32Exception? failure))
             {
-                throw RegisterException;
+                throw failure;
             }
-
-            Identifier = identifier;
-            Modifiers = modifiers;
-            VirtualKey = virtualKey;
         }
 
         public void Unregister(nint windowHandle, int identifier)
         {
-            UnregisterCount++;
+            UnregisterCalls.Add(identifier);
+            if (UnregisterFailures.TryGetValue(identifier, out Win32Exception? failure))
+            {
+                throw failure;
+            }
         }
     }
 }

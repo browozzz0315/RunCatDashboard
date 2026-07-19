@@ -80,6 +80,14 @@
                                        Foreground="{DynamicResource OverlayErrorBrush}"
                                        Text="{Binding OverlayErrorMessage}"
                                        TextWrapping="Wrap" />
+                            <TextBlock Margin="0,2,8,0"
+                                       Foreground="{DynamicResource OverlayErrorBrush}"
+                                       Text="{Binding HotKeyErrorMessage}"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Margin="0,2,8,0"
+                                       Foreground="{DynamicResource OverlayErrorBrush}"
+                                       Text="{Binding TrayErrorMessage}"
+                                       TextWrapping="Wrap" />
                         </StackPanel>
                         <Button Grid.Column="1"
                                 Padding="10,4"

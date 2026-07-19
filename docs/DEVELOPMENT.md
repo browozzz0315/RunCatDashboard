@@ -50,3 +50,11 @@ Do not run the exact same implementation task twice against the same working tre
 ## Definition of done
 
 A V1 task is complete only when requested behavior is implemented, build succeeds, relevant tests pass, manual checks are listed, resource implications are considered, no unrelated changes are included, and a suitable commit message is provided.
+
+## System tray and hotkey verification
+
+The tray and global-hotkey unit tests use adapters and do not prove Windows
+shell integration. Before release, follow the manual checklist in
+[`SYSTEM_TRAY_AND_HOTKEYS.md`](SYSTEM_TRAY_AND_HOTKEYS.md), including an Explorer
+restart, hotkey conflicts, Close-to-Hide, fullscreen visibility precedence, and
+repeated exit/relaunch checks.

@@ -53,8 +53,24 @@ Responsible for CPU and memory sampling, bounded metric history, sampling interv
 
 Responsible for topmost behavior, click-through mode, no-activate behavior, global hotkeys, monitor placement, and DPI-aware positioning.
 
+Dashboard visibility uses one coordinator with separate user-requested and
+fullscreen-policy inputs. Tray actions, the visibility hotkey, Window Closing,
+and fullscreen observations update that coordinator instead of independently
+calling `Show()` or `Hide()`. The existing `MainWindow` and ViewModel instances
+remain alive while hidden.
+
+The system tray is implemented by an infrastructure-owned
+`System.Windows.Forms.NotifyIcon`; neither the concrete tray type nor HWND
+message handling enters the ViewModel. The shared Window message hook dispatches
+both registered hotkeys and the Windows `TaskbarCreated` message. Win32
+declarations remain under `Interop`.
+
 Fullscreen display-policy detection and lifecycle responsibilities are documented in
 [`OVERLAY_FULLSCREEN_POLICY.md`](OVERLAY_FULLSCREEN_POLICY.md).
+
+System tray, hotkey registration, visibility precedence, Explorer recovery,
+and exit cleanup are documented in
+[`SYSTEM_TRAY_AND_HOTKEYS.md`](SYSTEM_TRAY_AND_HOTKEYS.md).
 
 ### Settings services
 
