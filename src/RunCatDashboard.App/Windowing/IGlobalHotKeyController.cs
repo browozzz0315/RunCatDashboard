@@ -1,18 +1,24 @@
 namespace RunCatDashboard.App.Windowing;
 
-public interface IGlobalHotKeyController
+public enum GlobalHotKeyAction
 {
-    string GestureText { get; }
+    ToggleInteractionMode,
+    ToggleDashboardVisibility
+}
 
-    bool IsRegistered { get; }
+public sealed record GlobalHotKeyRegistrationState(
+    GlobalHotKeyAction Action,
+    int Identifier,
+    string GestureText,
+    bool IsRegistered,
+    string? Fault,
+    int? NativeErrorCode);
 
-    string? LastError { get; }
+public interface IGlobalHotKeyController : IDisposable
+{
+    IReadOnlyList<GlobalHotKeyRegistrationState> Registrations { get; }
 
-    bool Register(nint windowHandle);
+    IReadOnlyList<GlobalHotKeyRegistrationState> RegisterAll(nint windowHandle);
 
-    bool IsTargetMessage(int message, nint parameter);
-
-    bool Unregister();
-
-    void Close();
+    bool TryGetAction(int message, nint parameter, out GlobalHotKeyAction action);
 }

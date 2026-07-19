@@ -72,15 +72,52 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task HotKeyRegistrationFaults_AreShownWithoutRawErrorCodes()
+    {
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(),
+            new ControlledDelay());
+
+        viewModel.ApplyHotKeyRegistrations([
+            new GlobalHotKeyRegistrationState(
+                GlobalHotKeyAction.ToggleInteractionMode,
+                GlobalHotKeyController.InteractionHotKeyIdentifier,
+                GlobalHotKeyController.InteractionGestureText,
+                true,
+                null,
+                null),
+            new GlobalHotKeyRegistrationState(
+                GlobalHotKeyAction.ToggleDashboardVisibility,
+                GlobalHotKeyController.VisibilityHotKeyIdentifier,
+                GlobalHotKeyController.VisibilityGestureText,
+                false,
+                "顯示／隱藏快捷鍵註冊失敗，可能已被其他程式使用。",
+                1409)
+        ]);
+
+        Assert.Equal(
+            "顯示／隱藏快捷鍵註冊失敗，可能已被其他程式使用。",
+            viewModel.HotKeyErrorMessage);
+        Assert.DoesNotContain("1409", viewModel.HotKeyErrorMessage);
+    }
+
+    [Fact]
     public async Task GlobalHotKeyModeTransitions_DoNotChangeSamplingLifecycle()
     {
         var service = new SequenceMetricsService(Snapshot(10d));
         var delay = new ControlledDelay();
         var hotKeyController = new GlobalHotKeyController(new NoOpNativeGlobalHotKeyApi());
-        hotKeyController.Register(new nint(1234));
+        hotKeyController.RegisterAll(new nint(1234));
         var overlayController = new FakeOverlayWindowController();
         var coordinator = new OverlayModeCoordinator(overlayController);
-        var messageHandler = new OverlayHotKeyMessageHandler(hotKeyController, coordinator);
+        var interactionAction = new InteractionModeToggleAction(
+            new ImmediateUiDispatcher(),
+            coordinator);
+        var visibilityCoordinator = new WindowVisibilityCoordinator();
+        var messageHandler = new OverlayHotKeyMessageHandler(
+            hotKeyController,
+            interactionAction,
+            visibilityCoordinator);
         await using MainWindowViewModel viewModel = CreateViewModel(
             service,
             delay);
@@ -89,9 +126,8 @@ public sealed class MainWindowViewModelTests
 
         Assert.True(messageHandler.TryHandleMessage(
             GlobalHotKeyController.WindowMessageHotKey,
-            new nint(GlobalHotKeyController.HotKeyIdentifier),
-            out OverlayWindowState interactiveState));
-        viewModel.ApplyOverlayState(interactiveState);
+            new nint(GlobalHotKeyController.InteractionHotKeyIdentifier)));
+        viewModel.ApplyOverlayState(coordinator.State);
         Assert.True(viewModel.IsSampling);
         Assert.Equal("Sampling", viewModel.SamplingStatus);
         Assert.Equal(1, service.SampleCount);
@@ -99,9 +135,8 @@ public sealed class MainWindowViewModelTests
 
         Assert.True(messageHandler.TryHandleMessage(
             GlobalHotKeyController.WindowMessageHotKey,
-            new nint(GlobalHotKeyController.HotKeyIdentifier),
-            out OverlayWindowState clickThroughState));
-        viewModel.ApplyOverlayState(clickThroughState);
+            new nint(GlobalHotKeyController.InteractionHotKeyIdentifier)));
+        viewModel.ApplyOverlayState(coordinator.State);
         Assert.True(viewModel.IsSampling);
         Assert.Equal(1, service.SampleCount);
         Assert.Equal("Click-through", viewModel.OverlayModeText);

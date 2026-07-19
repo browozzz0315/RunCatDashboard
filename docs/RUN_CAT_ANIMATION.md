@@ -60,7 +60,7 @@ interval = 250 ms - (200 ms × cpu / 100)
 - subscriber 或 timer callback exception 不越過 dispatcher callback boundary，錯誤保留在 controller／ViewModel 的診斷狀態。
 - 單 frame controller 不啟動不必要的週期 timer。
 
-Overlay 因 fullscreen policy 隱藏時只停止跑貓 timer；metrics sampling、CPU history、global hotkey、interaction mode 與 HWND 均保持不變。Overlay 恢復顯示後從目前 frame 繼續，且不呼叫 `Activate` 或 `Focus`。MainWindow 關閉時停止動畫，ViewModel 解除 controller events 並 dispose controller；DI 再次 dispose 時仍安全。
+Overlay 因 fullscreen policy 或使用者要求隱藏時只停止跑貓 timer；metrics sampling、CPU history、global hotkey、interaction mode 與 HWND 均保持不變。Overlay 恢復顯示後從目前 frame 繼續，且不呼叫 `Activate` 或 `Focus`。一般 Window Close 只隱藏；只有系統匣退出造成的真正關閉才停止 ViewModel、解除 controller events 並 dispose controller；DI 再次 dispose 時仍安全。
 
 ## 範圍界線
 

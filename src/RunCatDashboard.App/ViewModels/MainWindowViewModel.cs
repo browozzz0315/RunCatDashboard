@@ -81,6 +81,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private string? _overlayErrorMessage;
 
     [ObservableProperty]
+    private string? _hotKeyErrorMessage;
+
+    [ObservableProperty]
+    private string? _trayErrorMessage;
+
+    [ObservableProperty]
     private OverlayDisplayPolicy _requestedDisplayPolicy =
         OverlayDisplayPolicy.HideOverFullscreenApps;
 
@@ -141,7 +147,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         OverlayMode == OverlayInteractionMode.Interactive;
 
     public string OverlayHotKeyText =>
-        $"{GlobalHotKeyController.DefaultGestureText} — toggle interaction mode";
+        $"{GlobalHotKeyController.InteractionGestureText} — toggle interaction mode; " +
+        $"{GlobalHotKeyController.VisibilityGestureText} — show/hide Dashboard";
 
     public string AppliedDisplayPolicyText =>
         $"{(IsOverlayVisible ? "Visible" : "Hidden")} / " +
@@ -212,6 +219,27 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         OverlayErrorMessage = message;
+    }
+
+    internal void ApplyHotKeyRegistrations(
+        IReadOnlyList<GlobalHotKeyRegistrationState> registrations)
+    {
+        ArgumentNullException.ThrowIfNull(registrations);
+        HotKeyErrorMessage = string.Join(
+            " ",
+            registrations
+                .Where(registration => registration.Fault is not null)
+                .Select(registration => registration.Fault)
+                .Distinct(StringComparer.Ordinal));
+        if (HotKeyErrorMessage.Length == 0)
+        {
+            HotKeyErrorMessage = null;
+        }
+    }
+
+    internal void ReportTrayError(string? message)
+    {
+        TrayErrorMessage = message;
     }
 
     internal void ApplyDisplayPolicyState(OverlayDisplayPolicyState state)

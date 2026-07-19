@@ -3,30 +3,38 @@ namespace RunCatDashboard.App.Windowing;
 internal sealed class OverlayHotKeyMessageHandler : IOverlayHotKeyMessageHandler
 {
     private readonly IGlobalHotKeyController _hotKeyController;
-    private readonly IOverlayModeCoordinator _modeCoordinator;
+    private readonly IInteractionModeToggleAction _interactionToggleAction;
+    private readonly IWindowVisibilityCoordinator _visibilityCoordinator;
 
     internal OverlayHotKeyMessageHandler(
         IGlobalHotKeyController hotKeyController,
-        IOverlayModeCoordinator modeCoordinator)
+        IInteractionModeToggleAction interactionToggleAction,
+        IWindowVisibilityCoordinator visibilityCoordinator)
     {
         ArgumentNullException.ThrowIfNull(hotKeyController);
-        ArgumentNullException.ThrowIfNull(modeCoordinator);
+        ArgumentNullException.ThrowIfNull(interactionToggleAction);
+        ArgumentNullException.ThrowIfNull(visibilityCoordinator);
         _hotKeyController = hotKeyController;
-        _modeCoordinator = modeCoordinator;
+        _interactionToggleAction = interactionToggleAction;
+        _visibilityCoordinator = visibilityCoordinator;
     }
 
-    public bool TryHandleMessage(
-        int message,
-        nint parameter,
-        out OverlayWindowState overlayState)
+    public bool TryHandleMessage(int message, nint parameter)
     {
-        if (!_hotKeyController.IsTargetMessage(message, parameter))
+        if (!_hotKeyController.TryGetAction(message, parameter, out GlobalHotKeyAction action))
         {
-            overlayState = _modeCoordinator.State;
             return false;
         }
 
-        overlayState = _modeCoordinator.ToggleMode();
+        if (action == GlobalHotKeyAction.ToggleInteractionMode)
+        {
+            _interactionToggleAction.RequestToggle();
+        }
+        else
+        {
+            _visibilityCoordinator.ToggleUserRequestedVisibility();
+        }
+
         return true;
     }
 }

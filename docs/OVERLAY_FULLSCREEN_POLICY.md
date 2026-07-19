@@ -16,11 +16,11 @@ Overlay 提供三態、僅限本次執行期間的顯示政策：
 
 - Fullscreen detector 只觀測 foreground window、window bounds 與 monitor，不操作 WPF Window。
 - 純政策 coordinator 根據 requested policy 與 observation 計算 visibility 與 topmost。
-- `MainWindow` lifecycle 負責 Dispatcher marshaling，以及實際設定 `Topmost`、`Show()`、`Hide()`。
+- `MainWindow` lifecycle 負責 Dispatcher marshaling 與實際設定 `Topmost`；fullscreen 結果先進入統一 visibility coordinator，再由 lifecycle 套用 `Show()`／`Hide()`。
 - `OverlayWindowController` 繼續只管理 Interactive／ClickThrough extended styles。
 - ViewModel 只保存可顯示的 requested／applied 狀態與診斷，不接觸 HWND、`HwndSource` 或 P/Invoke。
 
-政策 Hide／Show 不停止 metrics sampling、不解除 global hotkey、不重建 HWND、不改變 requested interaction mode，也不重新初始化 `MainWindow`。恢復顯示不呼叫 `Activate` 或 `Focus`。
+最終可見性為 user-requested visibility 與 fullscreen policy visibility 的 AND。政策 Hide／Show 不停止 metrics sampling、不解除 global hotkey、不重建 HWND、不改變 requested interaction mode，也不重新初始化 `MainWindow`。恢復顯示不呼叫 `Activate` 或 `Focus`；使用者手動隱藏後，fullscreen 結束不會自行顯示。
 
 ## Fullscreen observation
 

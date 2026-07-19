@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -13,42 +14,56 @@ public partial class MainWindow : Window
 
     private readonly MainWindowViewModel _viewModel;
     private readonly IOverlayWindowController _overlayWindowController;
-    private readonly IOverlayModeCoordinator _overlayModeCoordinator;
+    private readonly IInteractionModeToggleAction _interactionToggleAction;
     private readonly IGlobalHotKeyController _globalHotKeyController;
     private readonly IOverlayHotKeyMessageHandler _hotKeyMessageHandler;
+    private readonly IWindowVisibilityCoordinator _visibilityCoordinator;
+    private readonly ISystemTrayService _trayService;
+    private readonly IApplicationExitCoordinator _exitCoordinator;
     private readonly IWindowWorkAreaProvider _workAreaProvider;
     private readonly IOverlayDisplayMonitor _displayMonitor;
     private HwndSource? _windowSource;
     private nint _windowHandle;
     private bool _isHookInstalled;
     private bool _isDisplaySettingsHandlerRegistered;
-    private bool _isPolicyHidden;
+    private bool _isActuallyVisible = true;
     private bool _appliedPolicyTopmost = true;
     private bool _isClosed;
 
     public MainWindow(
         MainWindowViewModel viewModel,
         IOverlayWindowController overlayWindowController,
-        IOverlayModeCoordinator overlayModeCoordinator,
+        IInteractionModeToggleAction interactionToggleAction,
         IGlobalHotKeyController globalHotKeyController,
         IOverlayHotKeyMessageHandler hotKeyMessageHandler,
+        IWindowVisibilityCoordinator visibilityCoordinator,
+        ISystemTrayService trayService,
+        IApplicationExitCoordinator exitCoordinator,
         IWindowWorkAreaProvider workAreaProvider,
         IOverlayDisplayMonitor displayMonitor)
     {
         InitializeComponent();
         _viewModel = viewModel;
         _overlayWindowController = overlayWindowController;
-        _overlayModeCoordinator = overlayModeCoordinator;
+        _interactionToggleAction = interactionToggleAction;
         _globalHotKeyController = globalHotKeyController;
         _hotKeyMessageHandler = hotKeyMessageHandler;
+        _visibilityCoordinator = visibilityCoordinator;
+        _trayService = trayService;
+        _exitCoordinator = exitCoordinator;
         _workAreaProvider = workAreaProvider;
         _displayMonitor = displayMonitor;
         DataContext = viewModel;
 
         Loaded += OnLoaded;
+        Closing += OnWindowClosing;
         LocationChanged += OnOverlayLocationChanged;
         _viewModel.DisplayPolicyRequested += OnDisplayPolicyRequested;
         _displayMonitor.StateChanged += OnDisplayPolicyStateChanged;
+        _visibilityCoordinator.StateChanged += OnVisibilityStateChanged;
+        _trayService.DiagnosticChanged += OnTrayDiagnosticChanged;
+        _exitCoordinator.ExitRequested += OnExitRequested;
+        _interactionToggleAction.StateChanged += OnInteractionModeStateChanged;
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -57,57 +72,30 @@ public partial class MainWindow : Window
 
         _windowHandle = new WindowInteropHelper(this).Handle;
         StartDisplayPolicyMonitoring();
-        if (!TryInstallMessageHook())
+        bool isHookInstalled = TryInstallMessageHook();
+        if (isHookInstalled)
         {
-            RegisterDisplaySettingsHandler();
-            PositionAtInitialWorkAreaLocation();
-            return;
-        }
-
-        try
-        {
-            _globalHotKeyController.Register(_windowHandle);
-        }
-        catch (Exception exception) when (
-            exception is InvalidOperationException or ArgumentException)
-        {
-            _viewModel.ApplyOverlayState(
-                _overlayModeCoordinator.State,
-                $"{exception.Message} The overlay remains Interactive.");
-            RemoveMessageHook();
-            RegisterDisplaySettingsHandler();
-            PositionAtInitialWorkAreaLocation();
-            return;
+            IReadOnlyList<GlobalHotKeyRegistrationState> registrations =
+                _globalHotKeyController.RegisterAll(_windowHandle);
+            _viewModel.ApplyHotKeyRegistrations(registrations);
         }
 
         try
         {
             _overlayWindowController.Initialize(_windowHandle);
-            _viewModel.ApplyOverlayState(_overlayModeCoordinator.State);
+            _viewModel.ApplyOverlayState(_interactionToggleAction.State);
         }
         catch (Exception exception) when (
             exception is InvalidOperationException or ArgumentException)
         {
             _viewModel.ApplyOverlayState(
-                _overlayModeCoordinator.State,
+                _interactionToggleAction.State,
                 $"Overlay initialization failed: {exception.Message}");
 
-            try
-            {
-                _globalHotKeyController.Close();
-            }
-            catch (InvalidOperationException unregisterException)
-            {
-                _viewModel.ReportOverlayError(
-                    $"{exception.Message} {unregisterException.Message}");
-            }
-
-            RemoveMessageHook();
-            RegisterDisplaySettingsHandler();
-            PositionAtInitialWorkAreaLocation();
-            return;
         }
 
+        _trayService.Initialize();
+        _viewModel.ReportTrayError(_trayService.LastError);
         RegisterDisplaySettingsHandler();
         PositionAtInitialWorkAreaLocation();
     }
@@ -117,21 +105,19 @@ public partial class MainWindow : Window
         _isClosed = true;
         _viewModel.SetAnimationVisibility(false);
         Loaded -= OnLoaded;
+        Closing -= OnWindowClosing;
         LocationChanged -= OnOverlayLocationChanged;
         _viewModel.DisplayPolicyRequested -= OnDisplayPolicyRequested;
         _displayMonitor.StateChanged -= OnDisplayPolicyStateChanged;
-        _displayMonitor.Stop();
-
-        try
-        {
-            _globalHotKeyController.Close();
-        }
-        catch (InvalidOperationException exception)
-        {
-            _viewModel.ReportOverlayError(exception.Message);
-        }
-
+        _visibilityCoordinator.StateChanged -= OnVisibilityStateChanged;
+        _trayService.DiagnosticChanged -= OnTrayDiagnosticChanged;
+        _exitCoordinator.ExitRequested -= OnExitRequested;
+        _interactionToggleAction.StateChanged -= OnInteractionModeStateChanged;
+        _globalHotKeyController.Dispose();
+        _viewModel.ApplyHotKeyRegistrations(_globalHotKeyController.Registrations);
         RemoveMessageHook();
+        _trayService.Dispose();
+        _displayMonitor.Stop();
         UnregisterDisplaySettingsHandler();
         _overlayWindowController.Close();
         _windowHandle = nint.Zero;
@@ -206,13 +192,9 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (_hotKeyMessageHandler.TryHandleMessage(
-                    message,
-                    wordParameter,
-                    out OverlayWindowState overlayState))
-            {
-                _viewModel.ApplyOverlayState(overlayState);
-            }
+            _hotKeyMessageHandler.TryHandleMessage(message, wordParameter);
+
+            _trayService.TryHandleWindowMessage(message);
         }
         catch (Exception exception)
         {
@@ -243,6 +225,38 @@ public partial class MainWindow : Window
     private void OnCloseButtonClick(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    private void OnWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (_visibilityCoordinator.HandleWindowClosing())
+        {
+            e.Cancel = true;
+        }
+    }
+
+    private void OnExitRequested()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_isClosed)
+            {
+                return;
+            }
+
+            _visibilityCoordinator.BeginExit();
+            Close();
+        });
+    }
+
+    private void OnTrayDiagnosticChanged(string? message)
+    {
+        Dispatcher.BeginInvoke(() => _viewModel.ReportTrayError(message));
+    }
+
+    private void OnInteractionModeStateChanged(OverlayWindowState state)
+    {
+        _viewModel.ApplyOverlayState(state);
     }
 
     private void RegisterDisplaySettingsHandler()
@@ -376,54 +390,68 @@ public partial class MainWindow : Window
                 _appliedPolicyTopmost = state.IsTopmost;
             }
 
-            if (state.IsVisible && _isPolicyHidden)
+            _visibilityCoordinator.SetFullscreenPolicyVisibility(state.IsVisible);
+            _viewModel.ApplyDisplayPolicyState(state with
             {
-                Show();
-                _isPolicyHidden = false;
-                _viewModel.SetAnimationVisibility(true);
-            }
-            else if (!state.IsVisible && !_isPolicyHidden)
-            {
-                _viewModel.SetAnimationVisibility(false);
-                Hide();
-                _isPolicyHidden = true;
-            }
-
-            _viewModel.ApplyDisplayPolicyState(state);
+                IsVisible = _visibilityCoordinator.State.IsActuallyVisible
+            });
         }
         catch (Exception exception)
         {
             string fault = $"Applying the display policy failed: {exception.Message}";
-            TryRestoreFailVisible(fault);
             _displayMonitor.ReportFault(fault);
+            _viewModel.ApplyDisplayPolicyState(state with
+            {
+                IsVisible = _isActuallyVisible,
+                Fault = fault
+            });
         }
     }
 
-    private void TryRestoreFailVisible(string fault)
+    private void OnVisibilityStateChanged(WindowVisibilityState state)
     {
-        string effectiveFault = fault;
         try
         {
-            if (_isPolicyHidden)
-            {
-                Show();
-                _isPolicyHidden = false;
-                _viewModel.SetAnimationVisibility(true);
-            }
+            Dispatcher.BeginInvoke(() => ApplyVisibilityState(state));
         }
         catch (Exception exception)
         {
-            effectiveFault += $" Restoring fail-visible state also failed: {exception.Message}";
+            _viewModel.ReportOverlayError(
+                $"Dispatching Dashboard visibility failed: {exception.Message}");
+        }
+    }
+
+    private void ApplyVisibilityState(WindowVisibilityState state)
+    {
+        if (_isClosed || state.IsActuallyVisible == _isActuallyVisible)
+        {
+            return;
         }
 
-        _viewModel.SetAnimationVisibility(!_isPolicyHidden);
-
-        _viewModel.ApplyDisplayPolicyState(_displayMonitor.State with
+        try
         {
-            IsVisible = !_isPolicyHidden,
-            IsTopmost = _appliedPolicyTopmost,
-            Fault = effectiveFault
-        });
+            if (state.IsActuallyVisible)
+            {
+                Show();
+                _viewModel.SetAnimationVisibility(true);
+            }
+            else
+            {
+                _viewModel.SetAnimationVisibility(false);
+                Hide();
+            }
+
+            _isActuallyVisible = state.IsActuallyVisible;
+            _viewModel.ApplyDisplayPolicyState(_displayMonitor.State with
+            {
+                IsVisible = _isActuallyVisible
+            });
+        }
+        catch (Exception exception)
+        {
+            _viewModel.ReportOverlayError(
+                $"Applying Dashboard visibility failed: {exception.Message}");
+        }
     }
 
     private void PositionAtInitialWorkAreaLocation()
