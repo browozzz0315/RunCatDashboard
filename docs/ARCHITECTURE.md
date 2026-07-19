@@ -72,7 +72,7 @@ RunCatDashboard uses the fixed session-local named Mutex `Local\RunCatDashboard.
 
 Responsible for mapping CPU load to animation speed, frame selection, and animation policy independent of the concrete View.
 
-The six-frame resource, CPU averaging, linear speed mapping, timer, and visibility lifecycle decisions are documented in
+The eight-frame resource, CPU averaging, linear speed mapping, timer, and visibility lifecycle decisions are documented in
 [`RUN_CAT_ANIMATION.md`](RUN_CAT_ANIMATION.md).
 
 ## Future extraction criteria

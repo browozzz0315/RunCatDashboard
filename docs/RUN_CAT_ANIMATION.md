@@ -2,29 +2,31 @@
 
 ## 美術資源
 
-正式動畫使用本專案原創、面向右側的黑色像素貓，保留小型黃色眼睛，不直接複製 RunCatNeo 或其他第三方素材。跑步循環固定為 6 幀：
+正式動畫使用 CC0 授權的 Pet Cats Pack 中 Cat-2 Run animation。來源為橫向 8 幀的 `Cat-2/Cat-2-Run.png`，從左至右依序匯入：
 
-- 每幀為具有真正 alpha transparency 的 `48 × 32` RGBA PNG。
-- 貓本體約為 28～32 px 寬、16～20 px 高。
-- 所有幀使用相同 head/body anchor 與 baseline，避免切幀時上下或左右漂移。
+第三方素材與授權摘要記錄於 [`THIRD_PARTY_ASSETS.md`](THIRD_PARTY_ASSETS.md)。
+
+- 每幀為具有 alpha channel 的 `50 × 50` RGBA PNG。
+- 固定檔名為 `cat-frame-01.png` 至 `cat-frame-08.png`。
+- 每幀直接裁切自來源 strip 的對應 `50 × 50` 區域，不縮放、重新取樣或改變像素。
 - WPF 使用 `RenderOptions.BitmapScalingMode="NearestNeighbor"` 顯示。
+- WPF Image 使用 `Stretch="Uniform"`，保留正方形 sprite 比例。
 
-固定動作順序為：
+正式資源位於 `src/RunCatDashboard.App/Assets/RunCat/`，且唯一 runtime source 是上述八張單幀。來源 strip 只存在 root `assets/` 本機匯入目錄，不納入 App resource 或 Git。八張 frame 在 View converter 初始化時各載入及 decode 一次，使用 `BitmapCacheOption.OnLoad` 後凍結並重用；animation tick 只變更 frame index，不讀取磁碟、assembly resource 或建立新的 `BitmapImage`。
 
-1. 前腳著地、後腳收攏。
-2. 身體壓低承重。
-3. 後腳向後推蹬。
-4. 身體完全伸展騰空。
-5. 四肢向身體收攏。
-6. 前腳向下伸出，準備再次著地。
+## 素材匯入
 
-六幀依上述 gait phase 構成固定順序，並使用一致 canvas 與 baseline，避免播放時產生非預期位移。
+使用 repository 內的單用途腳本匯入：
 
-正式資源位於 `src/RunCatDashboard.App/Assets/RunCat/`，且唯一 runtime source 是依固定順序命名為 `cat-frame-01.png` 至 `cat-frame-06.png` 的六張單幀。Sprite sheet 不屬於 App runtime 或測試契約。六張 frame 在 View converter 初始化時各載入及 decode 一次，使用 `BitmapCacheOption.OnLoad` 後凍結並重用；animation tick 只變更 frame index，不讀取磁碟、assembly resource 或建立新的 `BitmapImage`。
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Import-PetCatRunAssets.ps1 `
+  -SourcePath '.\assets\Pet Cats Pack\Cat-2\Cat-2-Run.png' `
+  -OutputPath '.\src\RunCatDashboard.App\Assets\RunCat'
+```
 
-`cats/` 是使用者提供的姿態參考資料，root `assets/` 是本機圖片工作資料；兩者都不屬於 runtime resource，也不納入 Git。正式 runtime PNG 由使用者提供並視為不可修改的美術來源；repository 不保留會重新生成或覆蓋它們的腳本。資源測試只驗證檔名、順序、PNG 尺寸、alpha、可見內容、assembly 載入與 converter cache 等技術契約，不綁定固定 hash、像素位置或姿勢。
+腳本只接受明確的來源與輸出路徑，驗證來源必須是 `400 × 50`、8-bit RGBA PNG，精確切成八張 `50 × 50` PNG，並在替換正式輸出前逐幀比對 decoded pixels。來源或既有輸出規格異常時會明確失敗，不下載或處理其他圖片。
 
-後續更新圖片時，由美術人員直接準備六張 `48 × 32`、具有 alpha channel 的 PNG，以固定檔名覆蓋正式 frame，再執行 build、test 與人工動畫驗證；不需要修改 hash、bounding box 或姿勢測試。
+未來純替換圖片仍須符合八張 `50 × 50` RGBA PNG、固定檔名與順序的正式 frame contract，並執行 build、test、來源逐像素比對與人工動畫驗證；測試不綁定固定 hash、bounding box 或姿勢。
 
 ## CPU 基準與速度映射
 

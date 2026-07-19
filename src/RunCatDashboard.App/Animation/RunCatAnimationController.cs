@@ -2,7 +2,7 @@ namespace RunCatDashboard.App.Animation;
 
 internal sealed class RunCatAnimationController : IRunCatAnimationController
 {
-    internal const int DefaultFrameCount = 6;
+    internal const int DefaultFrameCount = 8;
 
     private readonly object _gate = new();
     private readonly IAnimationTimer _timer;

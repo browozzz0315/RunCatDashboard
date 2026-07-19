@@ -5,13 +5,14 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Xml.Linq;
+using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Views;
 
 namespace RunCatDashboard.Tests.Resources;
 
 public sealed class RunCatResourceTests
 {
-    private const int ExpectedFrameCount = 6;
+    private const int ExpectedFrameCount = RunCatAnimationController.DefaultFrameCount;
     private static readonly byte[] PngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
     private static readonly string[] FrameResourceNames =
         Enumerable.Range(1, ExpectedFrameCount)
@@ -19,15 +20,16 @@ public sealed class RunCatResourceTests
             .ToArray();
 
     [Fact]
-    public void Assembly_ContainsExactlySixStableOrderedFrameResources()
+    public void Assembly_ContainsExactlyEightStableOrderedFrameResources()
     {
         IReadOnlyDictionary<string, byte[]> resources = ReadRunCatResources();
 
+        Assert.Equal(8, ExpectedFrameCount);
         Assert.Equal(FrameResourceNames, resources.Keys.Order(StringComparer.Ordinal));
     }
 
     [Fact]
-    public void Frames_Are48By32PngsWithAlphaAndVisibleContent()
+    public void Frames_Are50By50RgbaPngsWithAlphaAndVisibleContent()
     {
         IReadOnlyDictionary<string, byte[]> resources = ReadRunCatResources();
 
@@ -35,17 +37,58 @@ public sealed class RunCatResourceTests
         {
             byte[] png = resources[resourceName];
             Assert.True(png.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature));
-            Assert.Contains(png[25], new byte[] { 4, 6 });
+            Assert.Equal(6, png[25]);
 
             DecodedImage frame = Decode(png);
-            Assert.Equal(48, frame.Width);
-            Assert.Equal(32, frame.Height);
+            Assert.Equal(50, frame.Width);
+            Assert.Equal(50, frame.Height);
             Assert.Equal(PixelFormats.Bgra32, frame.Format);
 
             IEnumerable<byte> alphaValues = frame.Pixels
                 .Where((_, index) => index % 4 == 3);
             Assert.Contains(alphaValues, alpha => alpha < byte.MaxValue);
             Assert.Contains(alphaValues, alpha => alpha > byte.MinValue);
+        }
+    }
+
+    [Fact]
+    public void Frames_MatchCorrespondingLocalSourceStripRegionsWhenSourceIsAvailable()
+    {
+        string? sourcePath = TryFindRepositoryFile(
+            "assets/Pet Cats Pack/Cat-2/Cat-2-Run.png");
+        if (sourcePath is null)
+        {
+            return;
+        }
+
+        byte[] sourcePng = File.ReadAllBytes(sourcePath);
+        Assert.Equal(6, sourcePng[25]);
+        DecodedImage source = Decode(sourcePng);
+        Assert.Equal(400, source.Width);
+        Assert.Equal(50, source.Height);
+
+        IReadOnlyDictionary<string, byte[]> resources = ReadRunCatResources();
+        const int frameWidth = 50;
+        const int frameHeight = 50;
+        const int bytesPerPixel = 4;
+        int sourceStride = source.Width * bytesPerPixel;
+        int frameStride = frameWidth * bytesPerPixel;
+
+        for (int frameIndex = 0; frameIndex < ExpectedFrameCount; frameIndex++)
+        {
+            DecodedImage frame = Decode(resources[FrameResourceNames[frameIndex]]);
+            var expectedPixels = new byte[frameStride * frameHeight];
+            for (int row = 0; row < frameHeight; row++)
+            {
+                Array.Copy(
+                    source.Pixels,
+                    row * sourceStride + frameIndex * frameStride,
+                    expectedPixels,
+                    row * frameStride,
+                    frameStride);
+            }
+
+            Assert.Equal(expectedPixels, frame.Pixels);
         }
     }
 
@@ -111,7 +154,7 @@ public sealed class RunCatResourceTests
     }
 
     [Fact]
-    public void MainWindow_KeepsFixedRunCatImageLayoutAndNearestNeighborScaling()
+    public void MainWindow_UsesCenteredTwoTimesNearestNeighborScalingWithoutChangingPanelSize()
     {
         string xamlPath = FindRepositoryFile("src/RunCatDashboard.App/Views/MainWindow.xaml");
         XDocument document = XDocument.Load(xamlPath);
@@ -123,9 +166,24 @@ public sealed class RunCatResourceTests
                     "RunCatFrameConverter",
                     StringComparison.Ordinal) == true);
 
-        Assert.Equal("96", image.Attribute("Width")?.Value);
+        XElement border = Assert.IsType<XElement>(image.Parent);
+        XElement scaleTransform = Assert.Single(image.Elements(presentation + "Image.RenderTransform"))
+            .Element(presentation + "ScaleTransform") ??
+            throw new InvalidOperationException("Run Cat ScaleTransform is missing.");
+
+        Assert.Equal("98", border.Attribute("Width")?.Value);
+        Assert.Equal("66", border.Attribute("Height")?.Value);
+        Assert.Equal("True", border.Attribute("ClipToBounds")?.Value);
+        Assert.Equal("64", image.Attribute("Width")?.Value);
         Assert.Equal("64", image.Attribute("Height")?.Value);
+        Assert.Equal("Center", image.Attribute("HorizontalAlignment")?.Value);
+        Assert.Equal("Center", image.Attribute("VerticalAlignment")?.Value);
         Assert.Equal("NearestNeighbor", image.Attribute("RenderOptions.BitmapScalingMode")?.Value);
+        Assert.Equal("Uniform", image.Attribute("Stretch")?.Value);
+        Assert.NotEqual("Fill", image.Attribute("Stretch")?.Value);
+        Assert.Equal("0.5,0.5", image.Attribute("RenderTransformOrigin")?.Value);
+        Assert.Equal("2", scaleTransform.Attribute("ScaleX")?.Value);
+        Assert.Equal("2", scaleTransform.Attribute("ScaleY")?.Value);
     }
 
     private static IReadOnlyDictionary<string, byte[]> ReadRunCatResources()
@@ -176,6 +234,12 @@ public sealed class RunCatResourceTests
 
     private static string FindRepositoryFile(string relativePath)
     {
+        return TryFindRepositoryFile(relativePath) ??
+            throw new FileNotFoundException($"Repository file was not found: {relativePath}");
+    }
+
+    private static string? TryFindRepositoryFile(string relativePath)
+    {
         string normalizedPath = relativePath.Replace('/', Path.DirectorySeparatorChar);
         DirectoryInfo? directory = new(AppContext.BaseDirectory);
         while (directory is not null)
@@ -189,7 +253,7 @@ public sealed class RunCatResourceTests
             directory = directory.Parent;
         }
 
-        throw new FileNotFoundException($"Repository file was not found: {relativePath}");
+        return null;
     }
 
     private sealed record DecodedImage(

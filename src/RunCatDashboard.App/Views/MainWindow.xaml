@@ -102,13 +102,22 @@
                                 Background="{DynamicResource OverlayRunCatBackgroundBrush}"
                                 BorderBrush="{DynamicResource OverlayBorderBrush}"
                                 BorderThickness="1"
+                                ClipToBounds="True"
                                 CornerRadius="4">
-                            <Image Width="96"
+                            <Image Width="64"
                                    Height="64"
+                                   HorizontalAlignment="Center"
                                    RenderOptions.BitmapScalingMode="NearestNeighbor"
+                                   RenderTransformOrigin="0.5,0.5"
                                    SnapsToDevicePixels="True"
                                    Source="{Binding AnimationFrameIndex, Converter={StaticResource RunCatFrameConverter}}"
-                                   Stretch="Uniform" />
+                                   Stretch="Uniform"
+                                   VerticalAlignment="Center">
+                                <Image.RenderTransform>
+                                    <ScaleTransform ScaleX="2"
+                                                    ScaleY="2" />
+                                </Image.RenderTransform>
+                            </Image>
                         </Border>
                         <StackPanel Grid.Column="2"
                                     VerticalAlignment="Center">

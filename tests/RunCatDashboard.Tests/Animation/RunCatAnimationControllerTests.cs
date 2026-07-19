@@ -12,20 +12,20 @@ public sealed class RunCatAnimationControllerTests
     }
 
     [Fact]
-    public void SixFrames_AdvanceInOrderAndWrapToFirstFrame()
+    public void EightDefaultFrames_AdvanceInOrderAndWrapToFirstFrame()
     {
         var timer = new FakeAnimationTimer();
-        using var controller = new RunCatAnimationController(timer, 6);
+        using var controller = new RunCatAnimationController(timer);
         var published = new List<int>();
         controller.FrameChanged += published.Add;
         controller.Start();
 
-        for (int index = 0; index < 6; index++)
+        for (int index = 0; index < RunCatAnimationController.DefaultFrameCount; index++)
         {
             timer.Fire();
         }
 
-        Assert.Equal([1, 2, 3, 4, 5, 0], published);
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 0], published);
         Assert.Equal(0, controller.FrameIndex);
     }
 
