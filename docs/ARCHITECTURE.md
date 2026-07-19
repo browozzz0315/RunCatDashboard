@@ -53,6 +53,9 @@ Responsible for CPU and memory sampling, bounded metric history, sampling interv
 
 Responsible for topmost behavior, click-through mode, no-activate behavior, global hotkeys, monitor placement, and DPI-aware positioning.
 
+Fullscreen display-policy detection and lifecycle responsibilities are documented in
+[`OVERLAY_FULLSCREEN_POLICY.md`](OVERLAY_FULLSCREEN_POLICY.md).
+
 ### Settings services
 
 Responsible for loading and saving local settings, defaults, validation, and future settings migration.

@@ -63,6 +63,36 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     [ObservableProperty]
     private string? _overlayErrorMessage;
 
+    [ObservableProperty]
+    private OverlayDisplayPolicy _requestedDisplayPolicy =
+        OverlayDisplayPolicy.HideOverFullscreenApps;
+
+    [ObservableProperty]
+    private bool _isOverlayVisible = true;
+
+    [ObservableProperty]
+    private bool _isOverlayTopmost = true;
+
+    [ObservableProperty]
+    private bool _isFullscreenDetected;
+
+    [ObservableProperty]
+    private bool _isForegroundOnOverlayMonitor;
+
+    [ObservableProperty]
+    private string _foregroundDisplayDiagnostic = "Foreground not evaluated";
+
+    [ObservableProperty]
+    private string _overlayMonitorDiagnostic = "Overlay monitor not evaluated";
+
+    [ObservableProperty]
+    private string? _displayPolicyFault;
+
+    public event Action<OverlayDisplayPolicy>? DisplayPolicyRequested;
+
+    public IReadOnlyList<OverlayDisplayPolicy> DisplayPolicies { get; } =
+        Enum.GetValues<OverlayDisplayPolicy>();
+
     public string OverlayModeText
     {
         get
@@ -95,6 +125,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
     public string OverlayHotKeyText =>
         $"{GlobalHotKeyController.DefaultGestureText} — toggle interaction mode";
+
+    public string AppliedDisplayPolicyText =>
+        $"{(IsOverlayVisible ? "Visible" : "Hidden")} / " +
+        $"{(IsOverlayTopmost ? "Topmost" : "Not topmost")}";
+
+    public string FullscreenDisplayStatusText =>
+        IsFullscreenDetected
+            ? IsForegroundOnOverlayMonitor
+                ? "Fullscreen detected on the Overlay monitor"
+                : "Fullscreen detected on another monitor"
+            : "No fullscreen foreground window detected";
 
     public IReadOnlyList<SystemMetricsSnapshot> CpuHistoryNewestFirst =>
         _cpuHistoryNewestFirst;
@@ -146,6 +187,19 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         OverlayErrorMessage = message;
+    }
+
+    internal void ApplyDisplayPolicyState(OverlayDisplayPolicyState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        IsOverlayVisible = state.IsVisible;
+        IsOverlayTopmost = state.IsTopmost;
+        IsFullscreenDetected = state.IsFullscreenDetected;
+        IsForegroundOnOverlayMonitor = state.IsForegroundOnOverlayMonitor;
+        ForegroundDisplayDiagnostic = state.ForegroundDiagnostic;
+        OverlayMonitorDiagnostic = state.OverlayMonitorDiagnostic;
+        DisplayPolicyFault = state.Fault;
     }
 
     public bool Start()
@@ -343,5 +397,30 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     partial void OnOverlayErrorMessageChanged(string? value)
     {
         OnPropertyChanged(nameof(OverlayModeText));
+    }
+
+    partial void OnRequestedDisplayPolicyChanged(OverlayDisplayPolicy value)
+    {
+        DisplayPolicyRequested?.Invoke(value);
+    }
+
+    partial void OnIsOverlayVisibleChanged(bool value)
+    {
+        OnPropertyChanged(nameof(AppliedDisplayPolicyText));
+    }
+
+    partial void OnIsOverlayTopmostChanged(bool value)
+    {
+        OnPropertyChanged(nameof(AppliedDisplayPolicyText));
+    }
+
+    partial void OnIsFullscreenDetectedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(FullscreenDisplayStatusText));
+    }
+
+    partial void OnIsForegroundOnOverlayMonitorChanged(bool value)
+    {
+        OnPropertyChanged(nameof(FullscreenDisplayStatusText));
     }
 }

@@ -54,6 +54,11 @@ public partial class App : Application
                 provider.GetRequiredService<IGlobalHotKeyController>(),
                 provider.GetRequiredService<IOverlayModeCoordinator>()));
         services.AddSingleton<IWindowWorkAreaProvider, Win32WindowWorkAreaProvider>();
+        services.AddSingleton<IOverlayDisplayMonitor>(
+            _ => new OverlayDisplayMonitor(
+                new FullscreenObservationSource(new Win32FullscreenApi()),
+                new Win32ForegroundWindowEventHook(),
+                new ReconciliationTimer()));
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<MainWindow>();
     }
