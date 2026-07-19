@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\RunCat\cat-frame-01.png;Assets\RunCat\cat-frame-02.png;Assets\RunCat\cat-frame-03.png;Assets\RunCat\cat-frame-04.png;Assets\RunCat\cat-frame-05.png;Assets\RunCat\cat-frame-06.png" />
+    <Resource Include="Assets\RunCat\cat-frame-01.png;Assets\RunCat\cat-frame-02.png;Assets\RunCat\cat-frame-03.png;Assets\RunCat\cat-frame-04.png;Assets\RunCat\cat-frame-05.png;Assets\RunCat\cat-frame-06.png;Assets\RunCat\cat-frame-07.png;Assets\RunCat\cat-frame-08.png" />
   </ItemGroup>
 
 </Project>
