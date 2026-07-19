@@ -34,6 +34,40 @@ public sealed class MainWindowViewModelTests
         Assert.True(viewModel.IsInteractive);
         Assert.False(viewModel.IsOverlayFaulted);
         Assert.Null(viewModel.OverlayErrorMessage);
+        Assert.Equal(
+            OverlayDisplayPolicy.HideOverFullscreenApps,
+            viewModel.RequestedDisplayPolicy);
+        Assert.True(viewModel.IsOverlayVisible);
+        Assert.True(viewModel.IsOverlayTopmost);
+        Assert.Null(viewModel.DisplayPolicyFault);
+    }
+
+    [Fact]
+    public async Task DisplayPolicySelectionAndAppliedState_AreKeptSeparate()
+    {
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(),
+            new ControlledDelay());
+        OverlayDisplayPolicy? requested = null;
+        viewModel.DisplayPolicyRequested += policy => requested = policy;
+
+        viewModel.RequestedDisplayPolicy = OverlayDisplayPolicy.NeverTopmost;
+        viewModel.ApplyDisplayPolicyState(new OverlayDisplayPolicyState(
+            OverlayDisplayPolicy.NeverTopmost,
+            true,
+            false,
+            true,
+            false,
+            "foreground diagnostic",
+            "overlay monitor diagnostic",
+            null));
+
+        Assert.Equal(OverlayDisplayPolicy.NeverTopmost, requested);
+        Assert.Equal(OverlayDisplayPolicy.NeverTopmost, viewModel.RequestedDisplayPolicy);
+        Assert.True(viewModel.IsOverlayVisible);
+        Assert.False(viewModel.IsOverlayTopmost);
+        Assert.Equal("Visible / Not topmost", viewModel.AppliedDisplayPolicyText);
+        Assert.Equal("Fullscreen detected on another monitor", viewModel.FullscreenDisplayStatusText);
     }
 
     [Fact]

@@ -88,6 +88,34 @@
                     <Separator Margin="0,0,0,8" />
 
                     <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
+                               FontWeight="SemiBold"
+                               Text="Fullscreen display policy" />
+                    <ComboBox Margin="0,5,0,0"
+                              ItemsSource="{Binding DisplayPolicies}"
+                              SelectedItem="{Binding RequestedDisplayPolicy, Mode=TwoWay}" />
+                    <TextBlock Margin="0,5,0,0"
+                               Foreground="{DynamicResource OverlaySecondaryTextBrush}"
+                               Text="{Binding AppliedDisplayPolicyText}" />
+                    <TextBlock Margin="0,2,0,0"
+                               Foreground="{DynamicResource OverlaySecondaryTextBrush}"
+                               Text="{Binding FullscreenDisplayStatusText}"
+                               TextWrapping="Wrap" />
+                    <TextBlock Margin="0,2,0,0"
+                               Foreground="{DynamicResource OverlayMutedTextBrush}"
+                               Text="{Binding ForegroundDisplayDiagnostic}"
+                               TextWrapping="Wrap" />
+                    <TextBlock Margin="0,2,0,0"
+                               Foreground="{DynamicResource OverlayMutedTextBrush}"
+                               Text="{Binding OverlayMonitorDiagnostic}"
+                               TextWrapping="Wrap" />
+                    <TextBlock Margin="0,2,0,8"
+                               Foreground="{DynamicResource OverlayErrorBrush}"
+                               Text="{Binding DisplayPolicyFault}"
+                               TextWrapping="Wrap" />
+
+                    <Separator Margin="0,0,0,8" />
+
+                    <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
                                FontSize="16"
                                FontWeight="SemiBold"
                                Text="System Metrics Dashboard" />

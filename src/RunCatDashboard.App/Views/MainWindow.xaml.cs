@@ -17,10 +17,13 @@ public partial class MainWindow : Window
     private readonly IGlobalHotKeyController _globalHotKeyController;
     private readonly IOverlayHotKeyMessageHandler _hotKeyMessageHandler;
     private readonly IWindowWorkAreaProvider _workAreaProvider;
+    private readonly IOverlayDisplayMonitor _displayMonitor;
     private HwndSource? _windowSource;
     private nint _windowHandle;
     private bool _isHookInstalled;
     private bool _isDisplaySettingsHandlerRegistered;
+    private bool _isPolicyHidden;
+    private bool _appliedPolicyTopmost = true;
     private bool _isClosed;
 
     public MainWindow(
@@ -29,7 +32,8 @@ public partial class MainWindow : Window
         IOverlayModeCoordinator overlayModeCoordinator,
         IGlobalHotKeyController globalHotKeyController,
         IOverlayHotKeyMessageHandler hotKeyMessageHandler,
-        IWindowWorkAreaProvider workAreaProvider)
+        IWindowWorkAreaProvider workAreaProvider,
+        IOverlayDisplayMonitor displayMonitor)
     {
         InitializeComponent();
         _viewModel = viewModel;
@@ -38,9 +42,13 @@ public partial class MainWindow : Window
         _globalHotKeyController = globalHotKeyController;
         _hotKeyMessageHandler = hotKeyMessageHandler;
         _workAreaProvider = workAreaProvider;
+        _displayMonitor = displayMonitor;
         DataContext = viewModel;
 
         Loaded += OnLoaded;
+        LocationChanged += OnOverlayLocationChanged;
+        _viewModel.DisplayPolicyRequested += OnDisplayPolicyRequested;
+        _displayMonitor.StateChanged += OnDisplayPolicyStateChanged;
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -48,8 +56,11 @@ public partial class MainWindow : Window
         base.OnSourceInitialized(e);
 
         _windowHandle = new WindowInteropHelper(this).Handle;
+        StartDisplayPolicyMonitoring();
         if (!TryInstallMessageHook())
         {
+            RegisterDisplaySettingsHandler();
+            PositionAtInitialWorkAreaLocation();
             return;
         }
 
@@ -105,6 +116,10 @@ public partial class MainWindow : Window
     {
         _isClosed = true;
         Loaded -= OnLoaded;
+        LocationChanged -= OnOverlayLocationChanged;
+        _viewModel.DisplayPolicyRequested -= OnDisplayPolicyRequested;
+        _displayMonitor.StateChanged -= OnDisplayPolicyStateChanged;
+        _displayMonitor.Stop();
 
         try
         {
@@ -264,12 +279,144 @@ public partial class MainWindow : Window
                 if (!_isClosed)
                 {
                     TryClampToCurrentWorkArea();
+                    _displayMonitor.NotifyDisplaySettingsChanged();
                 }
             });
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            _displayMonitor.ReportFault(
+                $"Display-settings policy reevaluation failed: {exception.Message}");
         }
+    }
+
+    private void StartDisplayPolicyMonitoring()
+    {
+        try
+        {
+            _displayMonitor.Start(_windowHandle);
+        }
+        catch (Exception exception)
+        {
+            var faultState = _displayMonitor.State with
+            {
+                IsVisible = true,
+                Fault = $"Starting fullscreen policy monitoring failed: {exception.Message}"
+            };
+            _viewModel.ApplyDisplayPolicyState(faultState);
+        }
+    }
+
+    private void OnDisplayPolicyRequested(OverlayDisplayPolicy policy)
+    {
+        try
+        {
+            _displayMonitor.SetPolicy(policy);
+        }
+        catch (Exception exception)
+        {
+            _displayMonitor.ReportFault(
+                $"Changing the display policy failed: {exception.Message}");
+        }
+    }
+
+    private void OnOverlayLocationChanged(object? sender, EventArgs e)
+    {
+        if (_isClosed || _windowHandle == nint.Zero)
+        {
+            return;
+        }
+
+        try
+        {
+            _displayMonitor.NotifyOverlayMonitorChanged();
+        }
+        catch (Exception exception)
+        {
+            _displayMonitor.ReportFault(
+                $"Overlay-monitor reevaluation failed: {exception.Message}");
+        }
+    }
+
+    private void OnDisplayPolicyStateChanged(OverlayDisplayPolicyState state)
+    {
+        if (_isClosed)
+        {
+            return;
+        }
+
+        try
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_isClosed)
+                {
+                    return;
+                }
+
+                ApplyDisplayPolicyState(state);
+            });
+        }
+        catch (Exception exception)
+        {
+            _displayMonitor.ReportFault(
+                $"Dispatching the display policy state failed: {exception.Message}");
+        }
+    }
+
+    private void ApplyDisplayPolicyState(OverlayDisplayPolicyState state)
+    {
+        try
+        {
+            if (_appliedPolicyTopmost != state.IsTopmost)
+            {
+                Topmost = state.IsTopmost;
+                _appliedPolicyTopmost = state.IsTopmost;
+            }
+
+            if (state.IsVisible && _isPolicyHidden)
+            {
+                Show();
+                _isPolicyHidden = false;
+            }
+            else if (!state.IsVisible && !_isPolicyHidden)
+            {
+                Hide();
+                _isPolicyHidden = true;
+            }
+
+            _viewModel.ApplyDisplayPolicyState(state);
+        }
+        catch (Exception exception)
+        {
+            string fault = $"Applying the display policy failed: {exception.Message}";
+            TryRestoreFailVisible(fault);
+            _displayMonitor.ReportFault(fault);
+        }
+    }
+
+    private void TryRestoreFailVisible(string fault)
+    {
+        string effectiveFault = fault;
+        try
+        {
+            if (_isPolicyHidden)
+            {
+                Show();
+                _isPolicyHidden = false;
+            }
+        }
+        catch (Exception exception)
+        {
+            effectiveFault += $" Restoring fail-visible state also failed: {exception.Message}";
+        }
+
+        _viewModel.ApplyDisplayPolicyState(_displayMonitor.State with
+        {
+            IsVisible = !_isPolicyHidden,
+            IsTopmost = _appliedPolicyTopmost,
+            Fault = effectiveFault
+        });
     }
 
     private void PositionAtInitialWorkAreaLocation()
