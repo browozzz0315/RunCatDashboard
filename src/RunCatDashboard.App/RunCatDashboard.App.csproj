@@ -18,6 +18,9 @@
     <Resource Include="Assets\RunCat\cat-frame-01.png;Assets\RunCat\cat-frame-02.png;Assets\RunCat\cat-frame-03.png;Assets\RunCat\cat-frame-04.png;Assets\RunCat\cat-frame-05.png;Assets\RunCat\cat-frame-06.png;Assets\RunCat\cat-frame-07.png;Assets\RunCat\cat-frame-08.png" />
     <EmbeddedResource Include="Assets\RunCat\RunCatDashboard.Tray.ico"
                       LogicalName="RunCatDashboard.App.Assets.RunCat.RunCatDashboard.Tray.ico" />
+    <EmbeddedResource Include="Assets\RunCat\TrayAnimation\tray-cat-frame-*.ico">
+      <LogicalName>RunCatDashboard.App.Assets.RunCat.TrayAnimation.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>

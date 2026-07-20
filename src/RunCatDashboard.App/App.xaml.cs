@@ -143,14 +143,21 @@ public partial class App : System.Windows.Application
                 provider.GetRequiredService<IInteractionModeToggleAction>(),
                 provider.GetRequiredService<IWindowVisibilityCoordinator>()));
         services.AddSingleton<ITrayIconAdapter>(
-            _ => new NotifyIconTrayAdapter(new AssemblyTrayIconResourceLoader()));
+            _ => new NotifyIconTrayAdapter(
+                new AssemblyTrayIconResourceLoader(),
+                new AssemblyTrayAnimationIconResourceLoader()));
+        services.AddSingleton<ITrayAnimationCoordinator>(provider =>
+            new TrayAnimationCoordinator(
+                provider.GetRequiredService<ITrayIconAdapter>(),
+                provider.GetRequiredService<IRunCatAnimationController>()));
         services.AddSingleton<ISystemTrayService>(provider =>
             new SystemTrayService(
                 provider.GetRequiredService<ITrayIconAdapter>(),
                 new Win32RegisteredWindowMessageApi(),
                 provider.GetRequiredService<IWindowVisibilityCoordinator>(),
                 provider.GetRequiredService<IInteractionModeToggleAction>(),
-                provider.GetRequiredService<IApplicationExitCoordinator>()));
+                provider.GetRequiredService<IApplicationExitCoordinator>(),
+                provider.GetRequiredService<ITrayAnimationCoordinator>()));
         services.AddSingleton<IWindowWorkAreaProvider, Win32WindowWorkAreaProvider>();
         services.AddSingleton<IOverlayDisplayMonitor>(
             _ => new OverlayDisplayMonitor(

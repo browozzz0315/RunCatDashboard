@@ -433,11 +433,9 @@ public partial class MainWindow : Window
             if (state.IsActuallyVisible)
             {
                 Show();
-                _viewModel.SetAnimationVisibility(true);
             }
             else
             {
-                _viewModel.SetAnimationVisibility(false);
                 Hide();
             }
 
