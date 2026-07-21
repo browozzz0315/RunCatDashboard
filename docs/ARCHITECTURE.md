@@ -89,7 +89,18 @@ and exit cleanup are documented in
 
 ### Settings services
 
-Responsible for loading and saving local settings, defaults, validation, and future settings migration.
+Responsible for versioned JSON loading/saving, defaults, validation, corrupt or
+unsupported backup, serialized atomic writes, 500ms trailing debounce, and exit
+flush. ViewModels consume settings abstractions and never access files,
+directories, concrete paths, Registry, Screen, HWND, `HwndSource`, `NotifyIcon`,
+or P/Invoke. HKCU Run is a separate Windows adapter with requested/applied/fault
+state. Full details are in [`SETTINGS_AND_STARTUP.md`](SETTINGS_AND_STARTUP.md).
+
+Startup loads settings and reconciles HKCU Run before MainWindow construction.
+The Window lifecycle can create its HWND while remaining hidden, initialize
+native styles/tray/hotkeys/sampling, restore placement, and only then apply the
+combined requested/fullscreen visibility. Settings Window is a transient View
+behind a singleton lifecycle service and never becomes `Application.MainWindow`.
 
 ### Interop
 

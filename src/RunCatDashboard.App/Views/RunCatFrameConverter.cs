@@ -40,7 +40,7 @@ public sealed class RunCatFrameConverter : IValueConverter
             frame.CacheOption = BitmapCacheOption.OnLoad;
             frame.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
             frame.UriSource = new Uri(
-                $"pack://application:,,,/RunCatDashboard.App;component/Assets/RunCat/cat-frame-{index + 1:D2}.png",
+                $"pack://application:,,,/RunCatDashboard;component/Assets/RunCat/cat-frame-{index + 1:D2}.png",
                 UriKind.Absolute);
             frame.EndInit();
             frame.Freeze();

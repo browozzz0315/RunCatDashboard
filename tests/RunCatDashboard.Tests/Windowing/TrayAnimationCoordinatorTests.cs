@@ -150,6 +150,7 @@ public sealed class TrayAnimationCoordinatorTests
         public event Action? VisibilityToggleRequested { add { } remove { } }
         public event Action? InteractionToggleRequested { add { } remove { } }
         public event Action? AnimationToggleRequested { add { } remove { } }
+        public event Action? SettingsRequested { add { } remove { } }
         public event Action? ExitRequested { add { } remove { } }
         public bool CanUseAnimatedIcons { get; set; } = true;
         public string? AnimationIconLoadError { get; set; }

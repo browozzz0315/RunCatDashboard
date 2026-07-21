@@ -5,6 +5,7 @@ using System.Windows.Interop;
 using Microsoft.Win32;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Windowing;
+using RunCatDashboard.App.Settings;
 
 namespace RunCatDashboard.App.Views;
 
@@ -22,13 +23,18 @@ public partial class MainWindow : Window
     private readonly IApplicationExitCoordinator _exitCoordinator;
     private readonly IWindowWorkAreaProvider _workAreaProvider;
     private readonly IOverlayDisplayMonitor _displayMonitor;
+    private readonly ISettingsService _settingsService;
+    private readonly ISettingsWindowService _settingsWindowService;
+    private readonly ExplicitShutdownCoordinator _shutdownCoordinator;
     private HwndSource? _windowSource;
     private nint _windowHandle;
     private bool _isHookInstalled;
     private bool _isDisplaySettingsHandlerRegistered;
-    private bool _isActuallyVisible = true;
+    private bool _isActuallyVisible;
     private bool _appliedPolicyTopmost = true;
     private bool _isClosed;
+    private bool _isPositionRestored;
+    private bool _hasStartedBackgroundLifecycle;
 
     public MainWindow(
         MainWindowViewModel viewModel,
@@ -40,7 +46,10 @@ public partial class MainWindow : Window
         ISystemTrayService trayService,
         IApplicationExitCoordinator exitCoordinator,
         IWindowWorkAreaProvider workAreaProvider,
-        IOverlayDisplayMonitor displayMonitor)
+        IOverlayDisplayMonitor displayMonitor,
+        ISettingsService settingsService,
+        ISettingsWindowService settingsWindowService,
+        ExplicitShutdownCoordinator shutdownCoordinator)
     {
         InitializeComponent();
         _viewModel = viewModel;
@@ -53,6 +62,9 @@ public partial class MainWindow : Window
         _exitCoordinator = exitCoordinator;
         _workAreaProvider = workAreaProvider;
         _displayMonitor = displayMonitor;
+        _settingsService = settingsService;
+        _settingsWindowService = settingsWindowService;
+        _shutdownCoordinator = shutdownCoordinator;
         DataContext = viewModel;
 
         Loaded += OnLoaded;
@@ -62,8 +74,16 @@ public partial class MainWindow : Window
         _displayMonitor.StateChanged += OnDisplayPolicyStateChanged;
         _visibilityCoordinator.StateChanged += OnVisibilityStateChanged;
         _trayService.DiagnosticChanged += OnTrayDiagnosticChanged;
+        _trayService.SettingsRequested += OnSettingsRequested;
         _exitCoordinator.ExitRequested += OnExitRequested;
         _interactionToggleAction.StateChanged += OnInteractionModeStateChanged;
+    }
+
+    internal void PrepareForStartup()
+    {
+        _ = new WindowInteropHelper(this).EnsureHandle();
+        StartBackgroundLifecycle();
+        ApplyVisibilityState(_visibilityCoordinator.State);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -97,7 +117,7 @@ public partial class MainWindow : Window
         _trayService.Initialize();
         _viewModel.ReportTrayError(_trayService.LastError);
         RegisterDisplaySettingsHandler();
-        PositionAtInitialWorkAreaLocation();
+        RestoreOrInitializePosition();
     }
 
     protected override void OnClosed(EventArgs e)
@@ -111,6 +131,7 @@ public partial class MainWindow : Window
         _displayMonitor.StateChanged -= OnDisplayPolicyStateChanged;
         _visibilityCoordinator.StateChanged -= OnVisibilityStateChanged;
         _trayService.DiagnosticChanged -= OnTrayDiagnosticChanged;
+        _trayService.SettingsRequested -= OnSettingsRequested;
         _exitCoordinator.ExitRequested -= OnExitRequested;
         _interactionToggleAction.StateChanged -= OnInteractionModeStateChanged;
         _globalHotKeyController.Dispose();
@@ -128,6 +149,16 @@ public partial class MainWindow : Window
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         Loaded -= OnLoaded;
+        StartBackgroundLifecycle();
+    }
+
+    private void StartBackgroundLifecycle()
+    {
+        if (_hasStartedBackgroundLifecycle)
+        {
+            return;
+        }
+        _hasStartedBackgroundLifecycle = true;
         _viewModel.Start();
         _viewModel.SetAnimationVisibility(true);
     }
@@ -237,16 +268,24 @@ public partial class MainWindow : Window
 
     private void OnExitRequested()
     {
-        Dispatcher.BeginInvoke(() =>
+        Dispatcher.BeginInvoke(async () =>
         {
             if (_isClosed)
             {
                 return;
             }
 
-            _visibilityCoordinator.BeginExit();
-            Close();
+            await _shutdownCoordinator.ShutdownAsync(
+                SaveCurrentPosition,
+                _settingsWindowService.Close,
+                Close,
+                System.Windows.Application.Current.Shutdown);
         });
+    }
+
+    private void OnSettingsRequested()
+    {
+        Dispatcher.BeginInvoke(_settingsWindowService.Open);
     }
 
     private void OnTrayDiagnosticChanged(string? message)
@@ -257,6 +296,10 @@ public partial class MainWindow : Window
     private void OnInteractionModeStateChanged(OverlayWindowState state)
     {
         _viewModel.ApplyOverlayState(state);
+        _settingsService.Update(current => current with
+        {
+            Overlay = new OverlaySettings(state.RequestedMode)
+        });
     }
 
     private void RegisterDisplaySettingsHandler()
@@ -346,6 +389,10 @@ public partial class MainWindow : Window
         try
         {
             _displayMonitor.NotifyOverlayMonitorChanged();
+            if (_isPositionRestored)
+            {
+                SaveCurrentPosition();
+            }
         }
         catch (Exception exception)
         {
@@ -410,6 +457,13 @@ public partial class MainWindow : Window
 
     private void OnVisibilityStateChanged(WindowVisibilityState state)
     {
+        _settingsService.Update(current => current with
+        {
+            Window = current.Window with
+            {
+                IsDashboardVisible = state.IsUserRequestedVisible
+            }
+        });
         try
         {
             Dispatcher.BeginInvoke(() => ApplyVisibilityState(state));
@@ -449,6 +503,29 @@ public partial class MainWindow : Window
         {
             _viewModel.ReportOverlayError(
                 $"Applying Dashboard visibility failed: {exception.Message}");
+        }
+    }
+
+    private void RestoreOrInitializePosition()
+    {
+        _isPositionRestored = false;
+        try
+        {
+            WindowSettings persisted = _settingsService.Current.Window;
+            if (persisted.Left is double left && persisted.Top is double top)
+            {
+                Left = left;
+                Top = top;
+                TryClampToCurrentWorkArea();
+            }
+            else
+            {
+                PositionAtInitialWorkAreaLocation();
+            }
+        }
+        finally
+        {
+            _isPositionRestored = true;
         }
     }
 
@@ -507,5 +584,20 @@ public partial class MainWindow : Window
     {
         Left = bounds.Left;
         Top = bounds.Top;
+    }
+
+    private void SaveCurrentPosition()
+    {
+        if (!WindowPositionPersistence.ShouldSave(_isPositionRestored, Left, Top))
+        {
+            return;
+        }
+
+        double left = Left;
+        double top = Top;
+        _settingsService.Update(current => current with
+        {
+            Window = current.Window with { Left = left, Top = top }
+        });
     }
 }

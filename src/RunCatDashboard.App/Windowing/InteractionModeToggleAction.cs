@@ -30,9 +30,24 @@ internal sealed class InteractionModeToggleAction : IInteractionModeToggleAction
         }
     }
 
+    public void RequestMode(OverlayInteractionMode mode)
+    {
+        ValueTask dispatch = _dispatcher.InvokeAsync(() => SetAndPublish(mode));
+        if (!dispatch.IsCompletedSuccessfully)
+        {
+            _ = ObserveDispatchAsync(dispatch);
+        }
+    }
+
     private void ToggleAndPublish()
     {
         OverlayWindowState state = _modeCoordinator.ToggleMode();
+        StateChanged?.Invoke(state);
+    }
+
+    private void SetAndPublish(OverlayInteractionMode mode)
+    {
+        OverlayWindowState state = _modeCoordinator.TrySetMode(mode);
         StateChanged?.Invoke(state);
     }
 

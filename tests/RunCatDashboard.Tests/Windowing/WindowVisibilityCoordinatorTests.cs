@@ -4,6 +4,19 @@ namespace RunCatDashboard.Tests.Windowing;
 
 public sealed class WindowVisibilityCoordinatorTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void PersistedInitialVisibility_ProducesExpectedActualVisibility(bool requested)
+    {
+        var coordinator = new WindowVisibilityCoordinator();
+
+        coordinator.SetUserRequestedVisibility(requested);
+
+        Assert.Equal(requested, coordinator.State.IsUserRequestedVisible);
+        Assert.Equal(requested, coordinator.State.IsActuallyVisible);
+    }
+
     [Fact]
     public void UserHidden_WhenFullscreenExits_RemainsHidden()
     {

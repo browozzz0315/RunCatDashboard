@@ -10,7 +10,8 @@ Overlay 提供三態、僅限本次執行期間的顯示政策：
 | `HideOverFullscreenApps` | 一般情況顯示 | `true` | 只有 foreground fullscreen 與 Overlay 位於同一 monitor 時隱藏 |
 | `NeverTopmost` | 保持顯示 | `false` | 不因偵測結果隱藏 |
 
-預設為 `HideOverFullscreenApps`。本 Issue 不保存選擇，應用程式重啟後回到預設值；設定持久化屬於 Issue #10。
+預設為 `HideOverFullscreenApps`。Issue #10 已建立 settings 基礎，但 fullscreen
+policy 明確仍不持久化；應用程式重啟後回到預設值。
 
 ## 責任分界
 
@@ -21,6 +22,10 @@ Overlay 提供三態、僅限本次執行期間的顯示政策：
 - ViewModel 只保存可顯示的 requested／applied 狀態與診斷，不接觸 HWND、`HwndSource` 或 P/Invoke。
 
 最終可見性為 user-requested visibility 與 fullscreen policy visibility 的 AND。政策 Hide／Show 不停止 metrics sampling、不解除 global hotkey、不重建 HWND、不改變 requested interaction mode，也不重新初始化 `MainWindow`。恢復顯示不呼叫 `Activate` 或 `Focus`；使用者手動隱藏後，fullscreen 結束不會自行顯示。
+
+Issue #10 只保存 user-requested visibility。hidden startup 會先建立 HWND 並完成
+tray/hotkey/sampling/native initialization，再以此 AND 結果決定是否第一次 Show；
+fullscreen observation 不會把暫時 actual hidden 寫回 settings。
 
 ## Fullscreen observation
 

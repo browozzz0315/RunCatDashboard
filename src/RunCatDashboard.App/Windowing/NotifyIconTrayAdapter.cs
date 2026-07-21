@@ -25,12 +25,15 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
         _visibilityItem = new Forms.ToolStripMenuItem();
         _interactionItem = new Forms.ToolStripMenuItem();
         _animationItem = new Forms.ToolStripMenuItem();
+        var settingsItem = new Forms.ToolStripMenuItem("設定...");
         var exitItem = new Forms.ToolStripMenuItem("退出");
         _menu = new Forms.ContextMenuStrip();
         _menu.Items.AddRange([
             _visibilityItem,
             _interactionItem,
             _animationItem,
+            new Forms.ToolStripSeparator(),
+            settingsItem,
             new Forms.ToolStripSeparator(),
             exitItem
         ]);
@@ -82,6 +85,7 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
         _visibilityItem.Click += OnVisibilityItemClick;
         _interactionItem.Click += OnInteractionItemClick;
         _animationItem.Click += OnAnimationItemClick;
+        settingsItem.Click += OnSettingsItemClick;
         exitItem.Click += OnExitItemClick;
     }
 
@@ -89,6 +93,7 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
     public event Action? VisibilityToggleRequested;
     public event Action? InteractionToggleRequested;
     public event Action? AnimationToggleRequested;
+    public event Action? SettingsRequested;
     public event Action? ExitRequested;
 
     public bool CanUseAnimatedIcons => _animationIconResources.Count > 0;
@@ -170,6 +175,7 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
         VisibilityToggleRequested = null;
         InteractionToggleRequested = null;
         AnimationToggleRequested = null;
+        SettingsRequested = null;
         ExitRequested = null;
     }
 
@@ -192,6 +198,9 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
 
     private void OnExitItemClick(object? sender, EventArgs e) =>
         ExitRequested?.Invoke();
+
+    private void OnSettingsItemClick(object? sender, EventArgs e) =>
+        SettingsRequested?.Invoke();
 
     private void ThrowIfIconUnavailable()
     {

@@ -42,6 +42,7 @@ internal sealed class SystemTrayService : ISystemTrayService
     public string? LastError { get; private set; }
 
     public event Action<string?>? DiagnosticChanged;
+    public event Action? SettingsRequested;
 
     public bool Initialize()
     {
@@ -55,6 +56,7 @@ internal sealed class SystemTrayService : ISystemTrayService
         _adapter.VisibilityToggleRequested += OnVisibilityToggleRequested;
         _adapter.InteractionToggleRequested += OnInteractionToggleRequested;
         _adapter.AnimationToggleRequested += OnAnimationToggleRequested;
+        _adapter.SettingsRequested += OnSettingsRequested;
         _adapter.ExitRequested += OnExitRequested;
         _visibilityCoordinator.StateChanged += OnVisibilityChanged;
         _interactionToggleAction.StateChanged += OnInteractionStateChanged;
@@ -137,6 +139,7 @@ internal sealed class SystemTrayService : ISystemTrayService
         }
 
         DiagnosticChanged = null;
+        SettingsRequested = null;
     }
 
     private void OnVisibilityToggleRequested()
@@ -163,6 +166,8 @@ internal sealed class SystemTrayService : ISystemTrayService
     }
 
     private void OnExitRequested() => _exitCoordinator.RequestExit();
+
+    private void OnSettingsRequested() => SettingsRequested?.Invoke();
 
     private void OnVisibilityChanged(WindowVisibilityState state)
     {
@@ -226,6 +231,7 @@ internal sealed class SystemTrayService : ISystemTrayService
         _adapter.VisibilityToggleRequested -= OnVisibilityToggleRequested;
         _adapter.InteractionToggleRequested -= OnInteractionToggleRequested;
         _adapter.AnimationToggleRequested -= OnAnimationToggleRequested;
+        _adapter.SettingsRequested -= OnSettingsRequested;
         _adapter.ExitRequested -= OnExitRequested;
         _visibilityCoordinator.StateChanged -= OnVisibilityChanged;
         _interactionToggleAction.StateChanged -= OnInteractionStateChanged;

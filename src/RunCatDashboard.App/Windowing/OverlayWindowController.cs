@@ -72,12 +72,13 @@ internal sealed class OverlayWindowController : IOverlayWindowController
             throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown overlay interaction mode.");
         }
 
+        _requestedMode = mode;
+
         if (_windowHandle == nint.Zero)
         {
-            throw new InvalidOperationException("The native window handle has not been initialized.");
+            _lastError = null;
+            return false;
         }
-
-        _requestedMode = mode;
 
         if (_appliedMode == mode)
         {
