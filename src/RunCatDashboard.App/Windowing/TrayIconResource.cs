@@ -15,6 +15,11 @@ internal interface ITrayIconResourceLoader
     ITrayIconResource Load();
 }
 
+internal interface ITrayAnimationIconResourceLoader
+{
+    IReadOnlyList<ITrayIconResource> LoadFrames();
+}
+
 internal sealed class AssemblyTrayIconResourceLoader : ITrayIconResourceLoader
 {
     internal const string ResourceName =
@@ -35,11 +40,18 @@ internal sealed class AssemblyTrayIconResourceLoader : ITrayIconResourceLoader
 
     public ITrayIconResource Load()
     {
-        using Stream? stream = _assembly.GetManifestResourceStream(ResourceName);
+        return LoadResource(_assembly, ResourceName);
+    }
+
+    internal static ITrayIconResource LoadResource(
+        Assembly assembly,
+        string resourceName)
+    {
+        using Stream? stream = assembly.GetManifestResourceStream(resourceName);
         if (stream is null)
         {
             throw new InvalidOperationException(
-                $"Tray icon assembly resource '{ResourceName}' was not found.");
+                $"Tray icon assembly resource '{resourceName}' was not found.");
         }
 
         try
@@ -51,8 +63,56 @@ internal sealed class AssemblyTrayIconResourceLoader : ITrayIconResourceLoader
             exception is ArgumentException or ExternalException)
         {
             throw new InvalidOperationException(
-                $"Tray icon assembly resource '{ResourceName}' is invalid.",
+                $"Tray icon assembly resource '{resourceName}' is invalid.",
                 exception);
+        }
+    }
+}
+
+internal sealed class AssemblyTrayAnimationIconResourceLoader
+    : ITrayAnimationIconResourceLoader
+{
+    internal const int FrameCount = 8;
+    internal const string ResourceNamePrefix =
+        "RunCatDashboard.App.Assets.RunCat.TrayAnimation.tray-cat-frame-";
+
+    private readonly Assembly _assembly;
+
+    internal AssemblyTrayAnimationIconResourceLoader()
+        : this(typeof(AssemblyTrayAnimationIconResourceLoader).Assembly)
+    {
+    }
+
+    internal AssemblyTrayAnimationIconResourceLoader(Assembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+        _assembly = assembly;
+    }
+
+    public IReadOnlyList<ITrayIconResource> LoadFrames()
+    {
+        var frames = new List<ITrayIconResource>(FrameCount);
+        try
+        {
+            for (int index = 0; index < FrameCount; index++)
+            {
+                string resourceName = $"{ResourceNamePrefix}{index + 1:D2}.ico";
+                frames.Add(
+                    AssemblyTrayIconResourceLoader.LoadResource(
+                        _assembly,
+                        resourceName));
+            }
+
+            return frames.AsReadOnly();
+        }
+        catch
+        {
+            foreach (ITrayIconResource frame in frames)
+            {
+                frame.Dispose();
+            }
+
+            throw;
         }
     }
 }

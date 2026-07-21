@@ -12,7 +12,14 @@
 - WPF 使用 `RenderOptions.BitmapScalingMode="NearestNeighbor"` 顯示。
 - WPF Image 使用 `Stretch="Uniform"`，保留正方形 sprite 比例。
 
-正式資源位於 `src/RunCatDashboard.App/Assets/RunCat/`，且唯一 runtime source 是上述八張單幀。來源 strip 只存在 root `assets/` 本機匯入目錄，不納入 App resource 或 Git。八張 frame 在 View converter 初始化時各載入及 decode 一次，使用 `BitmapCacheOption.OnLoad` 後凍結並重用；animation tick 只變更 frame index，不讀取磁碟、assembly resource 或建立新的 `BitmapImage`。
+正式資源位於 `src/RunCatDashboard.App/Assets/RunCat/`，且 Dashboard 唯一 runtime source 是上述八張單幀。來源 strip 只存在 root `assets/` 本機匯入目錄，不納入 App resource 或 Git。八張 frame 在 View converter 初始化時各載入及 decode 一次，使用 `BitmapCacheOption.OnLoad` 後凍結並重用；animation tick 只變更 frame index，不讀取磁碟、assembly resource 或建立新的 `BitmapImage`。
+
+系統匣不直接使用這八張 `50 × 50` Dashboard PNG 作為逐幀更新來源。建置前以
+`scripts/Generate-RunCatTrayAnimationIcons.ps1` 對同一組 Cat-2 黑貓 frame 做一次
+預處理，產生八個透明、無外框的 multi-size `.ico`；每個檔案包含
+`16 × 16`、`20 × 20`、`24 × 24`、`32 × 32`。runtime 啟動時一次載入並持有
+全部 icon，tick 只指定已載入的 `Icon`，不做 PNG decode、縮放或 PNG→Icon
+轉換。
 
 ## 素材匯入
 
@@ -60,11 +67,22 @@ interval = 250 ms - (200 ms × cpu / 100)
 - subscriber 或 timer callback exception 不越過 dispatcher callback boundary，錯誤保留在 controller／ViewModel 的診斷狀態。
 - 單 frame controller 不啟動不必要的週期 timer。
 
-Overlay 因 fullscreen policy 或使用者要求隱藏時只停止跑貓 timer；metrics sampling、CPU history、global hotkey、interaction mode 與 HWND 均保持不變。Overlay 恢復顯示後從目前 frame 繼續，且不呼叫 `Activate` 或 `Focus`。一般 Window Close 只隱藏；只有系統匣退出造成的真正關閉才停止 ViewModel、解除 controller events 並 dispose controller；DI 再次 dispose 時仍安全。
+Dashboard 與系統匣訂閱同一個 controller 的 `FrameChanged`，因此共用完全相同
+的 frame index，以及由同一組 CPU history、averager 與 mapper 算出的 interval。
+系統匣 presenter 不建立第二個 timer 或第二套 CPU 取樣。
+
+動畫 controller 在 App 存活期間持續執行。Overlay 因使用者要求、Window
+Close→Hide 或 fullscreen policy 隱藏時，不停止 controller；Window、ViewModel、
+metrics sampling、CPU history、global hotkey、interaction mode 與 HWND 也都保持
+原 instance。這讓預設 animated tray 在 Dashboard 隱藏時繼續跑，且使用者把
+tray 切成 static 時也只改變 tray 呈現，不改變 Dashboard animation state。
+Overlay 恢復顯示時直接顯示 controller 的目前 frame，且不呼叫 `Activate` 或
+`Focus`。只有系統匣退出造成的真正關閉才停止 ViewModel、解除 Dashboard 與
+tray presenter 的 controller events，並 dispose controller；重複 dispose 仍安全。
 
 ## 範圍界線
 
 - 收合／展開與 compact mode 由 Issue #18 負責；本 Issue 只提供固定尺寸、可重用的跑貓顯示區塊。
-- system tray 專用小尺寸 sprite 不屬於本 Issue。
+- system tray 使用同一 Cat-2 動畫衍生的預先產生小尺寸 icon；不提供貓種或主題切換。
 - 不包含 runner 選擇、多動物、主題、自訂動畫速度或設定保存。
 - WPF rendering、焦點、fullscreen Hide／Show、DPI 與長時間資源趨勢仍須在目標 Windows 環境人工驗證，不能只由單元測試宣稱完成。

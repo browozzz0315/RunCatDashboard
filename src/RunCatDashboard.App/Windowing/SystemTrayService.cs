@@ -11,7 +11,9 @@ internal sealed class SystemTrayService : ISystemTrayService
     private readonly IWindowVisibilityCoordinator _visibilityCoordinator;
     private readonly IInteractionModeToggleAction _interactionToggleAction;
     private readonly IApplicationExitCoordinator _exitCoordinator;
+    private readonly ITrayAnimationCoordinator _animationCoordinator;
     private int _taskbarCreatedMessage;
+    private string? _serviceError;
     private bool _isInitialized;
     private bool _isDisposed;
 
@@ -20,18 +22,21 @@ internal sealed class SystemTrayService : ISystemTrayService
         IRegisteredWindowMessageApi messageApi,
         IWindowVisibilityCoordinator visibilityCoordinator,
         IInteractionModeToggleAction interactionToggleAction,
-        IApplicationExitCoordinator exitCoordinator)
+        IApplicationExitCoordinator exitCoordinator,
+        ITrayAnimationCoordinator animationCoordinator)
     {
         ArgumentNullException.ThrowIfNull(adapter);
         ArgumentNullException.ThrowIfNull(messageApi);
         ArgumentNullException.ThrowIfNull(visibilityCoordinator);
         ArgumentNullException.ThrowIfNull(interactionToggleAction);
         ArgumentNullException.ThrowIfNull(exitCoordinator);
+        ArgumentNullException.ThrowIfNull(animationCoordinator);
         _adapter = adapter;
         _messageApi = messageApi;
         _visibilityCoordinator = visibilityCoordinator;
         _interactionToggleAction = interactionToggleAction;
         _exitCoordinator = exitCoordinator;
+        _animationCoordinator = animationCoordinator;
     }
 
     public string? LastError { get; private set; }
@@ -49,23 +54,27 @@ internal sealed class SystemTrayService : ISystemTrayService
         _adapter.DoubleClicked += OnVisibilityToggleRequested;
         _adapter.VisibilityToggleRequested += OnVisibilityToggleRequested;
         _adapter.InteractionToggleRequested += OnInteractionToggleRequested;
+        _adapter.AnimationToggleRequested += OnAnimationToggleRequested;
         _adapter.ExitRequested += OnExitRequested;
         _visibilityCoordinator.StateChanged += OnVisibilityChanged;
         _interactionToggleAction.StateChanged += OnInteractionStateChanged;
+        _animationCoordinator.DiagnosticChanged += OnAnimationDiagnosticChanged;
 
         try
         {
             _taskbarCreatedMessage = _messageApi.Register(TaskbarCreatedMessageName);
+            _animationCoordinator.Initialize();
             RefreshMenu();
             _adapter.Show();
             _isInitialized = true;
-            SetDiagnostic(null);
+            SetServiceError(null);
             return true;
         }
         catch (Exception exception)
         {
-            SetDiagnostic($"系統匣初始化失敗：{exception.Message}");
+            SetServiceError($"系統匣初始化失敗：{exception.Message}");
             DetachEvents();
+            _animationCoordinator.Dispose();
             return false;
         }
     }
@@ -80,7 +89,10 @@ internal sealed class SystemTrayService : ISystemTrayService
             visibility.IsUserRequestedVisible ? "隱藏 Dashboard" : "顯示 Dashboard",
             currentMode == OverlayInteractionMode.Interactive
                 ? "切換為 Click-through"
-                : "切換為 Interactive");
+                : "切換為 Interactive",
+            _animationCoordinator.IsAnimated
+                ? "停用系統匣動畫（改用靜態圖示）"
+                : "啟用系統匣動畫");
     }
 
     public bool TryHandleWindowMessage(int message)
@@ -93,12 +105,13 @@ internal sealed class SystemTrayService : ISystemTrayService
         try
         {
             RefreshMenu();
+            _animationCoordinator.RestoreCurrentModeIcon();
             _adapter.RecoverAfterExplorerRestart();
-            SetDiagnostic(null);
+            SetServiceError(null);
         }
         catch (Exception exception)
         {
-            SetDiagnostic($"Explorer 重啟後恢復系統匣圖示失敗：{exception.Message}");
+            SetServiceError($"Explorer 重啟後恢復系統匣圖示失敗：{exception.Message}");
         }
 
         return true;
@@ -113,13 +126,14 @@ internal sealed class SystemTrayService : ISystemTrayService
 
         _isDisposed = true;
         DetachEvents();
+        _animationCoordinator.Dispose();
         try
         {
             _adapter.Dispose();
         }
         catch (Exception exception)
         {
-            SetDiagnostic($"釋放系統匣圖示失敗：{exception.Message}");
+            SetServiceError($"釋放系統匣圖示失敗：{exception.Message}");
         }
 
         DiagnosticChanged = null;
@@ -135,6 +149,19 @@ internal sealed class SystemTrayService : ISystemTrayService
         _interactionToggleAction.RequestToggle();
     }
 
+    private void OnAnimationToggleRequested()
+    {
+        _animationCoordinator.ToggleMode();
+        try
+        {
+            RefreshMenu();
+        }
+        catch (Exception exception)
+        {
+            SetServiceError($"更新系統匣動畫選單狀態失敗：{exception.Message}");
+        }
+    }
+
     private void OnExitRequested() => _exitCoordinator.RequestExit();
 
     private void OnVisibilityChanged(WindowVisibilityState state)
@@ -145,7 +172,7 @@ internal sealed class SystemTrayService : ISystemTrayService
         }
         catch (Exception exception)
         {
-            SetDiagnostic($"更新系統匣選單狀態失敗：{exception.Message}");
+            SetServiceError($"更新系統匣選單狀態失敗：{exception.Message}");
         }
     }
 
@@ -157,12 +184,38 @@ internal sealed class SystemTrayService : ISystemTrayService
         }
         catch (Exception exception)
         {
-            SetDiagnostic($"更新系統匣互動模式狀態失敗：{exception.Message}");
+            SetServiceError($"更新系統匣互動模式狀態失敗：{exception.Message}");
         }
     }
 
-    private void SetDiagnostic(string? message)
+    private void OnAnimationDiagnosticChanged(string? message)
     {
+        PublishDiagnostic();
+    }
+
+    private void SetServiceError(string? message)
+    {
+        _serviceError = message;
+        PublishDiagnostic();
+    }
+
+    private void PublishDiagnostic()
+    {
+        string? message = string.Join(
+            " ",
+            new[] { _serviceError, _animationCoordinator.LastError }
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.Ordinal));
+        if (message.Length == 0)
+        {
+            message = null;
+        }
+
+        if (LastError == message)
+        {
+            return;
+        }
+
         LastError = message;
         DiagnosticChanged?.Invoke(message);
     }
@@ -172,8 +225,10 @@ internal sealed class SystemTrayService : ISystemTrayService
         _adapter.DoubleClicked -= OnVisibilityToggleRequested;
         _adapter.VisibilityToggleRequested -= OnVisibilityToggleRequested;
         _adapter.InteractionToggleRequested -= OnInteractionToggleRequested;
+        _adapter.AnimationToggleRequested -= OnAnimationToggleRequested;
         _adapter.ExitRequested -= OnExitRequested;
         _visibilityCoordinator.StateChanged -= OnVisibilityChanged;
         _interactionToggleAction.StateChanged -= OnInteractionStateChanged;
+        _animationCoordinator.DiagnosticChanged -= OnAnimationDiagnosticChanged;
     }
 }

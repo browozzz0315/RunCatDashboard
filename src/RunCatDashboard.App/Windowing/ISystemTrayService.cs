@@ -18,11 +18,23 @@ internal interface ITrayIconAdapter : IDisposable
     event Action? DoubleClicked;
     event Action? VisibilityToggleRequested;
     event Action? InteractionToggleRequested;
+    event Action? AnimationToggleRequested;
     event Action? ExitRequested;
+
+    bool CanUseAnimatedIcons { get; }
+
+    string? AnimationIconLoadError { get; }
 
     void Show();
 
-    void SetMenuText(string visibilityText, string interactionText);
+    void SetMenuText(
+        string visibilityText,
+        string interactionText,
+        string animationText);
+
+    void SetAnimatedFrame(int frameIndex);
+
+    void SetStaticIcon();
 
     void RecoverAfterExplorerRestart();
 }

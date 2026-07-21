@@ -65,6 +65,21 @@ message handling enters the ViewModel. The shared Window message hook dispatches
 both registered hotkeys and the Windows `TaskbarCreated` message. Win32
 declarations remain under `Interop`.
 
+`TrayAnimationCoordinator` is the tray-specific presenter. It subscribes to the
+same `IRunCatAnimationController.FrameChanged` event used by the Dashboard and
+maps that shared frame index directly to a preloaded tray icon frame. It does not
+own a timer, sample CPU, or duplicate the CPU-to-interval mapping. Animated mode
+is the per-process default; the tray menu can switch only the tray presentation
+to the static icon without changing Dashboard animation state or persisting a
+setting. Dashboard hiding does not stop the shared animation controller, so the
+animated tray remains synchronized while the Window instance is hidden.
+
+The tray adapter owns the static fallback icon and all preloaded animation icon
+frames until true application exit. Frame-assignment failures keep the previous
+valid icon. Failure to load the complete animation set falls back to
+`RunCatDashboard.Tray.ico` and remains diagnosable. Explorer recovery reuses the
+same tray service and presenter and reapplies the current animated/static mode.
+
 Fullscreen display-policy detection and lifecycle responsibilities are documented in
 [`OVERLAY_FULLSCREEN_POLICY.md`](OVERLAY_FULLSCREEN_POLICY.md).
 
@@ -88,7 +103,7 @@ RunCatDashboard uses the fixed session-local named Mutex `Local\RunCatDashboard.
 
 Responsible for mapping CPU load to animation speed, frame selection, and animation policy independent of the concrete View.
 
-The eight-frame resource, CPU averaging, linear speed mapping, timer, and visibility lifecycle decisions are documented in
+The eight-frame resource, CPU averaging, linear speed mapping, single timer, and application lifecycle decisions are documented in
 [`RUN_CAT_ANIMATION.md`](RUN_CAT_ANIMATION.md).
 
 ## Future extraction criteria
