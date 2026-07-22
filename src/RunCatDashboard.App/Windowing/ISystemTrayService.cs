@@ -6,6 +6,8 @@ public interface ISystemTrayService : IDisposable
 
     event Action<string?>? DiagnosticChanged;
 
+    event Action? SettingsRequested;
+
     bool Initialize();
 
     void RefreshMenu();
@@ -19,6 +21,7 @@ internal interface ITrayIconAdapter : IDisposable
     event Action? VisibilityToggleRequested;
     event Action? InteractionToggleRequested;
     event Action? AnimationToggleRequested;
+    event Action? SettingsRequested;
     event Action? ExitRequested;
 
     bool CanUseAnimatedIcons { get; }

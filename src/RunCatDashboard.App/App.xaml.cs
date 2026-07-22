@@ -1,10 +1,13 @@
 ﻿using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
+using System.IO;
 using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Views;
 using RunCatDashboard.App.Interop;
+using RunCatDashboard.App.Settings;
+using RunCatDashboard.App.Startup;
 using RunCatDashboard.App.Windowing;
 using MessageBox = System.Windows.MessageBox;
 
@@ -98,9 +101,22 @@ public partial class App : System.Windows.Application
         ConfigureServices(services);
         _serviceProvider = services.BuildServiceProvider();
 
+        ISettingsService settings = _serviceProvider.GetRequiredService<ISettingsService>();
+        settings.LoadAsync().GetAwaiter().GetResult();
+        AppSettings initial = settings.Current;
+        IRunAtLoginService runAtLogin = _serviceProvider.GetRequiredService<IRunAtLoginService>();
+        runAtLogin.ReconcileAsync(initial.Startup.RunAtLoginRequested).GetAwaiter().GetResult();
+        _serviceProvider.GetRequiredService<IWindowVisibilityCoordinator>()
+            .SetUserRequestedVisibility(initial.Window.IsDashboardVisible);
+        _serviceProvider.GetRequiredService<IOverlayModeCoordinator>()
+            .TrySetMode(initial.Overlay.InteractionMode);
+        _serviceProvider.GetRequiredService<MainWindowViewModel>()
+            .UpdateSamplingInterval(TimeSpan.FromMilliseconds(
+                initial.Metrics.SamplingIntervalMilliseconds));
+
         var mainWindow = _serviceProvider.GetRequiredService<MainWindow>();
         MainWindow = mainWindow;
-        mainWindow.Show();
+        mainWindow.PrepareForStartup();
     }
 
     private static void ShowAlreadyRunningMessage()
@@ -114,6 +130,15 @@ public partial class App : System.Windows.Application
 
     private static void ConfigureServices(IServiceCollection services)
     {
+        string settingsDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "RunCatDashboard");
+        services.AddSingleton<ISettingsStore>(
+            _ => new JsonSettingsStore(settingsDirectory, new PhysicalSettingsFileSystem()));
+        services.AddSingleton<ISettingsService>(provider =>
+            new SettingsService(provider.GetRequiredService<ISettingsStore>()));
+        services.AddSingleton<IRunAtLoginService>(
+            _ => new RunAtLoginService(new CurrentUserRunRegistry(), () => Environment.ProcessPath));
         services.AddSingleton<ISystemMetricsService, WindowsSystemMetricsService>();
         services.AddSingleton<IUiDispatcher>(
             _ => new WpfUiDispatcher(Current.Dispatcher));
@@ -135,6 +160,9 @@ public partial class App : System.Windows.Application
             _ => new WindowVisibilityCoordinator());
         services.AddSingleton<IApplicationExitCoordinator>(
             _ => new ApplicationExitCoordinator());
+        services.AddSingleton(provider => new ExplicitShutdownCoordinator(
+            provider.GetRequiredService<IWindowVisibilityCoordinator>(),
+            provider.GetRequiredService<ISettingsService>()));
         services.AddSingleton<IGlobalHotKeyController>(
             _ => new GlobalHotKeyController(new Win32GlobalHotKeyApi()));
         services.AddSingleton<IOverlayHotKeyMessageHandler>(provider =>
@@ -165,6 +193,17 @@ public partial class App : System.Windows.Application
                 new Win32ForegroundWindowEventHook(),
                 new ReconciliationTimer()));
         services.AddSingleton<MainWindowViewModel>();
+        services.AddSingleton<ISettingsApplicationService>(provider =>
+            new SettingsApplicationService(
+                provider.GetRequiredService<ISettingsService>(),
+                provider.GetRequiredService<IWindowVisibilityCoordinator>(),
+                provider.GetRequiredService<IInteractionModeToggleAction>(),
+                provider.GetRequiredService<MainWindowViewModel>(),
+                provider.GetRequiredService<IRunAtLoginService>()));
+        services.AddTransient<SettingsWindowViewModel>();
+        services.AddTransient<SettingsWindow>();
+        services.AddSingleton<ISettingsWindowService>(provider =>
+            new SettingsWindowService(() => provider.GetRequiredService<SettingsWindow>()));
         services.AddSingleton<MainWindow>();
     }
 }

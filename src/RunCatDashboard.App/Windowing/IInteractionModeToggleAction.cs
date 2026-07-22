@@ -7,4 +7,6 @@ public interface IInteractionModeToggleAction
     event Action<OverlayWindowState>? StateChanged;
 
     void RequestToggle();
+
+    void RequestMode(OverlayInteractionMode mode);
 }

@@ -188,8 +188,9 @@ public sealed class RunCatResourceTests
 
     private static IReadOnlyDictionary<string, byte[]> ReadRunCatResources()
     {
-        Stream resourceStream = typeof(RunCatDashboard.App.App).Assembly.GetManifestResourceStream(
-            "RunCatDashboard.App.g.resources") ??
+        System.Reflection.Assembly appAssembly = typeof(RunCatDashboard.App.App).Assembly;
+        Stream resourceStream = appAssembly.GetManifestResourceStream(
+            $"{appAssembly.GetName().Name}.g.resources") ??
             throw new InvalidOperationException("The WPF generated resource stream is missing.");
         using (resourceStream)
         using (var reader = new ResourceReader(resourceStream))

@@ -73,5 +73,11 @@ public sealed class OverlayHotKeyMessageHandlerTests
             State = State with { RequestedMode = mode, AppliedMode = mode };
             StateChanged?.Invoke(State);
         }
+
+        public void RequestMode(OverlayInteractionMode mode)
+        {
+            State = State with { RequestedMode = mode, AppliedMode = mode };
+            StateChanged?.Invoke(State);
+        }
     }
 }

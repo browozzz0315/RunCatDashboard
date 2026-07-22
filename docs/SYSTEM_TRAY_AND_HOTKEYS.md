@@ -34,7 +34,9 @@ set 載入失敗時使用已驗證的 static icon 並保留診斷。只有 stati
 2. `切換為 Interactive` 或 `切換為 Click-through`。
 3. `停用系統匣動畫（改用靜態圖示）` 或 `啟用系統匣動畫`。
 4. 分隔線。
-5. `退出`。
+5. `設定...`。
+6. 分隔線。
+7. `退出`。
 
 文字代表下一個動作。左鍵單擊不處理；左鍵雙擊與第一個選單項目都透過
 同一 visibility coordinator 切換 user-requested visibility。互動模式選單
@@ -42,6 +44,10 @@ set 載入失敗時使用已驗證的 static icon 並保留診斷。只有 stati
 action 經 WPF Dispatcher 呼叫既有 `OverlayModeCoordinator`，不在 tray service
 重寫 native style。confirmed／fault state 隨後同時更新 Dashboard 與 tray 選單；
 套用失敗時選單仍以 applied mode 顯示可重試的下一個動作。
+
+「設定...」發布 `SettingsRequested`，由 WPF lifecycle 的單一 Settings Window
+service 處理；Dashboard hidden 時仍可開啟。重複要求只 restore/Activate 現有視窗，
+Settings Window 關閉不會觸發 App exit。
 
 系統匣動畫模式每次啟動預設為 animated。第三個選單項目只切換本次 process
 中的 tray presentation；不寫入設定、不新增 Dashboard 設定 UI，重新啟動後
@@ -70,14 +76,15 @@ Close→Hide 與 fullscreen policy hide 時仍持續更新。
 任何 Dashboard Window Closing 在未要求退出時都會被取消，並把
 user-requested visibility 設為 false。系統匣 `退出` 是唯一真正退出來源：
 
-1. `ApplicationExitCoordinator` 先以冪等方式標記真正退出。
-2. Window Closing 因退出旗標而不取消。
-3. 解除所有成功註冊的 hotkey。
-4. 移除共用 HWND message hook。
+1. `ApplicationExitCoordinator` 發布要求，visibility coordinator 以冪等方式標記真正退出。
+2. 擷取最終 Window 位置並 flush settings，再關閉 Settings Window。
+3. Window Closing 因退出旗標而不取消。
+4. 解除所有成功註冊的 hotkey並移除共用 HWND message hook。
 5. 停止 tray frame subscription，隱藏並 dispose NotifyIcon 與全部 icon 資源。
 6. 停止 fullscreen monitor、display-settings subscription、window controller、
    animation 與 metrics lifecycle。
-7. DI disposal 再次安全地 dispose tray、hotkey 與 coordinators，App 結束。
+7. `Application.Shutdown()` 後由 DI disposal 再次安全地 dispose settings、tray、
+   hotkey 與 coordinators，App 結束。
 
 各 Dispose／Stop 可重複呼叫；退出要求也只處理一次。Single-instance Mutex
 取得與第二執行個體拒絕流程未改變。

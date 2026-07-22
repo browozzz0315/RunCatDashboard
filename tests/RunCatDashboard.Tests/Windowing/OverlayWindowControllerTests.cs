@@ -180,14 +180,13 @@ public sealed class OverlayWindowControllerTests
     }
 
     [Fact]
-    public void SetMode_BeforeHandleInitialization_ThrowsClearException()
+    public void SetMode_BeforeHandleInitialization_StoresRequestedModeForInitialization()
     {
         var controller = new OverlayWindowController(new FakeNativeWindowStyleApi());
 
-        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
-            () => controller.SetMode(OverlayInteractionMode.Interactive));
-
-        Assert.Contains("has not been initialized", exception.Message);
+        Assert.False(controller.SetMode(OverlayInteractionMode.Interactive));
+        Assert.Equal(OverlayInteractionMode.Interactive, controller.State.RequestedMode);
+        Assert.Null(controller.State.AppliedMode);
     }
 
     [Fact]

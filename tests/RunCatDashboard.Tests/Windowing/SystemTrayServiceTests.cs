@@ -96,6 +96,19 @@ public sealed class SystemTrayServiceTests
     }
 
     [Fact]
+    public void SettingsMenu_PublishesSettingsRequested()
+    {
+        var fixture = new TrayFixture();
+        fixture.Service.Initialize();
+        int requests = 0;
+        fixture.Service.SettingsRequested += () => requests++;
+
+        fixture.Adapter.FireSettings();
+
+        Assert.Equal(1, requests);
+    }
+
+    [Fact]
     public void TaskbarCreated_WhenRepeated_RecoversSameAdapterIdempotently()
     {
         var fixture = new TrayFixture();
@@ -225,6 +238,7 @@ public sealed class SystemTrayServiceTests
         public event Action? VisibilityToggleRequested;
         public event Action? InteractionToggleRequested;
         public event Action? AnimationToggleRequested;
+        public event Action? SettingsRequested;
         public event Action? ExitRequested;
         public bool CanUseAnimatedIcons { get; set; } = true;
         public string? AnimationIconLoadError { get; set; }
@@ -270,6 +284,7 @@ public sealed class SystemTrayServiceTests
         internal void FireVisibilityToggle() => VisibilityToggleRequested?.Invoke();
         internal void FireInteractionToggle() => InteractionToggleRequested?.Invoke();
         internal void FireAnimationToggle() => AnimationToggleRequested?.Invoke();
+        internal void FireSettings() => SettingsRequested?.Invoke();
         internal void FireExit() => ExitRequested?.Invoke();
     }
 
@@ -348,6 +363,12 @@ public sealed class SystemTrayServiceTests
                     AppliedMode = mode,
                     LastError = null
                 };
+            StateChanged?.Invoke(State);
+        }
+
+        public void RequestMode(OverlayInteractionMode mode)
+        {
+            State = State with { RequestedMode = mode, AppliedMode = mode };
             StateChanged?.Invoke(State);
         }
     }

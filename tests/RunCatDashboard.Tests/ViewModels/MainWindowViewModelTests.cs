@@ -300,6 +300,41 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task SamplingIntervalChange_WakesCurrentDelayWithoutSecondLoop()
+    {
+        var service = new SequenceMetricsService(Snapshot(10d), Snapshot(20d));
+        var delay = new ControlledDelay();
+        await using MainWindowViewModel viewModel = CreateViewModel(service, delay);
+        viewModel.Start();
+        await delay.WaitUntilDelayStartsAsync();
+
+        Assert.True(viewModel.UpdateSamplingInterval(TimeSpan.FromMilliseconds(500)));
+        await delay.WaitUntilDelayStartsAsync();
+
+        Assert.Equal(2, service.SampleCount);
+        Assert.Equal([TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(500)], delay.RequestedDelays);
+        Assert.Equal(1, delay.CancellationCount);
+        Assert.False(viewModel.UpdateSamplingInterval(TimeSpan.FromMilliseconds(500)));
+    }
+
+    [Fact]
+    public async Task IntervalUpdateAfterStop_DoesNotRestartSampling()
+    {
+        var service = new SequenceMetricsService(Snapshot(10d));
+        var delay = new ControlledDelay();
+        await using MainWindowViewModel viewModel = CreateViewModel(service, delay);
+        viewModel.Start();
+        await delay.WaitUntilDelayStartsAsync();
+        await viewModel.StopAsync();
+
+        Assert.True(viewModel.UpdateSamplingInterval(TimeSpan.FromMilliseconds(250)));
+        await Task.Delay(50);
+
+        Assert.Equal(1, service.SampleCount);
+        Assert.False(viewModel.IsSampling);
+    }
+
+    [Fact]
     public async Task StopAsync_CancelsPendingDelayAndStopsSampling()
     {
         var service = new SequenceMetricsService(Snapshot(10d));
@@ -735,11 +770,13 @@ public sealed class MainWindowViewModelTests
         private readonly SemaphoreSlim _delayStarted = new(0);
 
         internal int CancellationCount { get; private set; }
+        internal ConcurrentQueue<TimeSpan> RequestedDelays { get; } = new();
 
         internal async Task DelayAsync(
             TimeSpan delay,
             CancellationToken cancellationToken)
         {
+            RequestedDelays.Enqueue(delay);
             var completion = new TaskCompletionSource(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             _pendingDelays.Enqueue(completion);

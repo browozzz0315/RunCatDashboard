@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Threading.Channels;
 using CommunityToolkit.Mvvm.ComponentModel;
 using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Collections;
@@ -18,8 +19,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private readonly IUiDispatcher _uiDispatcher;
     private readonly IRunCatAnimationController _animationController;
     private readonly BoundedHistory<SystemMetricsSnapshot> _cpuHistoryBuffer;
-    private readonly TimeSpan _samplingInterval;
+    private long _samplingIntervalTicks;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
+    private readonly Channel<bool> _intervalChanges = Channel.CreateBounded<bool>(
+        new BoundedChannelOptions(1)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = false
+        });
     private readonly object _lifecycleLock = new();
     private CancellationTokenSource? _samplingCancellationSource;
     private Task? _samplingTask;
@@ -196,7 +204,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         _uiDispatcher = uiDispatcher;
         _animationController = animationController;
         _cpuHistoryBuffer = new BoundedHistory<SystemMetricsSnapshot>(cpuHistoryCapacity);
-        _samplingInterval = samplingInterval;
+        _samplingIntervalTicks = samplingInterval.Ticks;
         _delayAsync = delayAsync;
         _animationController.FrameChanged += OnAnimationFrameChanged;
         _animationController.Faulted += OnAnimationFaulted;
@@ -268,6 +276,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
             _samplingCancellationSource?.Dispose();
             _samplingCancellationSource = new CancellationTokenSource();
+            while (_intervalChanges.Reader.TryRead(out _)) { }
             CancellationToken cancellationToken = _samplingCancellationSource.Token;
 
             IsSampling = true;
@@ -316,6 +325,25 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
                 cancellationSource?.Dispose();
             }
         }
+    }
+
+    public bool UpdateSamplingInterval(TimeSpan interval)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+        long previous = Interlocked.Exchange(ref _samplingIntervalTicks, interval.Ticks);
+        if (previous == interval.Ticks)
+        {
+            return false;
+        }
+
+        lock (_lifecycleLock)
+        {
+            if (!_isDisposed && _samplingTask is { IsCompleted: false })
+            {
+                _intervalChanges.Writer.TryWrite(true);
+            }
+        }
+        return true;
     }
 
     public async ValueTask DisposeAsync()
@@ -371,7 +399,30 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
             try
             {
-                await _delayAsync(_samplingInterval, cancellationToken).ConfigureAwait(false);
+                TimeSpan interval = TimeSpan.FromTicks(
+                    Interlocked.Read(ref _samplingIntervalTicks));
+                using var wakeCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
+                Task delayTask = _delayAsync(interval, wakeCancellation.Token);
+                Task<bool> intervalChangeTask = _intervalChanges.Reader
+                    .WaitToReadAsync(wakeCancellation.Token).AsTask();
+                Task completed = await Task.WhenAny(delayTask, intervalChangeTask)
+                    .ConfigureAwait(false);
+                if (completed == intervalChangeTask &&
+                    await intervalChangeTask.ConfigureAwait(false))
+                {
+                    while (_intervalChanges.Reader.TryRead(out _)) { }
+                    wakeCancellation.Cancel();
+                    try { await delayTask.ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (wakeCancellation.IsCancellationRequested) { }
+                }
+                else
+                {
+                    await delayTask.ConfigureAwait(false);
+                    wakeCancellation.Cancel();
+                    try { await intervalChangeTask.ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (wakeCancellation.IsCancellationRequested) { }
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
