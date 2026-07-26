@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Windowing;
+using RunCatDashboard.Tests.Diagnostics;
 
 namespace RunCatDashboard.Tests.Windowing;
 
@@ -102,16 +104,19 @@ public sealed class OverlayDisplayMonitorTests
     [Fact]
     public void IdenticalObservation_DoesNotPublishRepeatedState()
     {
-        var fixture = new MonitorFixture();
+        var logger = new RecordingLogger<OverlayDisplayMonitor>();
+        var fixture = new MonitorFixture(logger);
         int publishCount = 0;
         fixture.Monitor.StateChanged += _ => publishCount++;
         fixture.Monitor.Start(OverlayWindow);
         int initialPublishCount = publishCount;
+        int initialLogCount = logger.Entries.Count;
 
         fixture.Timer.Fire();
         fixture.Timer.Fire();
 
         Assert.Equal(initialPublishCount, publishCount);
+        Assert.Equal(initialLogCount, logger.Entries.Count);
     }
 
     [Fact]
@@ -134,6 +139,53 @@ public sealed class OverlayDisplayMonitorTests
 
         Assert.False(fixture.Monitor.State.IsVisible);
         Assert.Null(fixture.Monitor.State.Fault);
+    }
+
+    [Fact]
+    public void FaultEpisode_LogsFirstFailureAndRecoveryWithoutIdenticalPollingNoise()
+    {
+        var logger = new RecordingLogger<OverlayDisplayMonitor>();
+        var fixture = new MonitorFixture(logger)
+        {
+            Observation = Observation(fullscreen: true, sameMonitor: true) with
+            {
+                Fault = "temporary detector failure",
+                FaultOperation = "GetWindowRect",
+                NativeErrorCode = 1400
+            }
+        };
+        fixture.Monitor.Start(OverlayWindow);
+        fixture.Timer.Fire();
+        fixture.Timer.Fire();
+        fixture.Observation = Observation(fullscreen: true, sameMonitor: true);
+        fixture.Timer.Fire();
+
+        Assert.Single(logger.Entries, entry =>
+            entry.Level == LogLevel.Warning &&
+            entry.Properties.TryGetValue("FaultState", out object? faultState) &&
+            Equals(faultState, "Faulted"));
+        Assert.Single(logger.Entries, entry =>
+            entry.Level == LogLevel.Information &&
+            entry.Properties.TryGetValue("FaultState", out object? faultState) &&
+            Equals(faultState, "Recovered"));
+    }
+
+    [Fact]
+    public void LoggingFailure_DoesNotChangeFullscreenFaultStateOrEscape()
+    {
+        var fixture = new MonitorFixture(new ThrowingLogger<OverlayDisplayMonitor>())
+        {
+            Observation = Observation(fullscreen: true, sameMonitor: true) with
+            {
+                Fault = "configured observation failure"
+            }
+        };
+
+        Exception? exception = Record.Exception(() => fixture.Monitor.Start(OverlayWindow));
+
+        Assert.Null(exception);
+        Assert.True(fixture.Monitor.State.IsVisible);
+        Assert.Equal("configured observation failure", fixture.Monitor.State.Fault);
     }
 
     [Fact]
@@ -311,9 +363,9 @@ public sealed class OverlayDisplayMonitorTests
         internal FakeTimer Timer { get; } = new();
         internal OverlayDisplayMonitor Monitor { get; }
 
-        internal MonitorFixture()
+        internal MonitorFixture(ILogger<OverlayDisplayMonitor>? logger = null)
         {
-            Monitor = new OverlayDisplayMonitor(Source, Hook, Timer);
+            Monitor = new OverlayDisplayMonitor(Source, Hook, Timer, logger: logger);
         }
 
         internal FullscreenObservation Observation

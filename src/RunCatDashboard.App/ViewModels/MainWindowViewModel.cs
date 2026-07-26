@@ -1,8 +1,11 @@
 using System.Globalization;
+using System.ComponentModel;
 using System.Threading.Channels;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Collections;
+using RunCatDashboard.App.Diagnostics;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.Windowing;
@@ -19,6 +22,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private readonly IUiDispatcher _uiDispatcher;
     private readonly IRunCatAnimationController _animationController;
     private readonly BoundedHistory<SystemMetricsSnapshot> _cpuHistoryBuffer;
+    private readonly ILogger<MainWindowViewModel> _logger;
+    private readonly FaultEpisodeTracker _samplingFaultEpisode = new();
     private long _samplingIntervalTicks;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly Channel<bool> _intervalChanges = Channel.CreateBounded<bool>(
@@ -68,12 +73,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private bool _isAnimationRunning;
 
     [ObservableProperty]
-    private string _animationAverageCpuText = "--";
-
-    [ObservableProperty]
-    private string _animationIntervalText = "250 ms/frame";
-
-    [ObservableProperty]
     private string? _animationErrorMessage;
 
     [ObservableProperty]
@@ -99,24 +98,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         OverlayDisplayPolicy.HideOverFullscreenApps;
 
     [ObservableProperty]
-    private bool _isOverlayVisible = true;
-
-    [ObservableProperty]
-    private bool _isOverlayTopmost = true;
-
-    [ObservableProperty]
-    private bool _isFullscreenDetected;
-
-    [ObservableProperty]
-    private bool _isForegroundOnOverlayMonitor;
-
-    [ObservableProperty]
-    private string _foregroundDisplayDiagnostic = "Foreground not evaluated";
-
-    [ObservableProperty]
-    private string _overlayMonitorDiagnostic = "Overlay monitor not evaluated";
-
-    [ObservableProperty]
     private string? _displayPolicyFault;
 
     public event Action<OverlayDisplayPolicy>? DisplayPolicyRequested;
@@ -124,50 +105,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     public IReadOnlyList<OverlayDisplayPolicy> DisplayPolicies { get; } =
         Enum.GetValues<OverlayDisplayPolicy>();
 
-    public string OverlayModeText
-    {
-        get
-        {
-            if (IsOverlayFaulted)
-            {
-                return "Faulted";
-            }
-
-            if (!HasAppliedOverlayMode && OverlayErrorMessage is not null)
-            {
-                return "Interactive fallback";
-            }
-
-            string modeText = OverlayMode switch
-            {
-                OverlayInteractionMode.Interactive => "Interactive",
-                OverlayInteractionMode.ClickThrough => "Click-through",
-                _ => "Unknown"
-            };
-
-            return HasAppliedOverlayMode ? modeText : $"{modeText} (pending)";
-        }
-    }
+    public string OverlayModeText => IsInteractive
+        ? "Interactive"
+        : "Click-through";
 
     public bool IsInteractive =>
         !HasAppliedOverlayMode ||
         IsOverlayFaulted ||
         OverlayMode == OverlayInteractionMode.Interactive;
-
-    public string OverlayHotKeyText =>
-        $"{GlobalHotKeyController.InteractionGestureText} — toggle interaction mode; " +
-        $"{GlobalHotKeyController.VisibilityGestureText} — show/hide Dashboard";
-
-    public string AppliedDisplayPolicyText =>
-        $"{(IsOverlayVisible ? "Visible" : "Hidden")} / " +
-        $"{(IsOverlayTopmost ? "Topmost" : "Not topmost")}";
-
-    public string FullscreenDisplayStatusText =>
-        IsFullscreenDetected
-            ? IsForegroundOnOverlayMonitor
-                ? "Fullscreen detected on the Overlay monitor"
-                : "Fullscreen detected on another monitor"
-            : "No fullscreen foreground window detected";
 
     public IReadOnlyList<SystemMetricsSnapshot> CpuHistoryNewestFirst =>
         _cpuHistoryNewestFirst;
@@ -175,14 +120,16 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     public MainWindowViewModel(
         ISystemMetricsService systemMetricsService,
         IUiDispatcher uiDispatcher,
-        IRunCatAnimationController animationController)
+        IRunCatAnimationController animationController,
+        ILogger<MainWindowViewModel>? logger = null)
         : this(
             systemMetricsService,
             uiDispatcher,
             animationController,
             DefaultCpuHistoryCapacity,
             DefaultSamplingInterval,
-            Task.Delay)
+            Task.Delay,
+            logger)
     {
     }
 
@@ -192,7 +139,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         IRunCatAnimationController animationController,
         int cpuHistoryCapacity,
         TimeSpan samplingInterval,
-        Func<TimeSpan, CancellationToken, Task> delayAsync)
+        Func<TimeSpan, CancellationToken, Task> delayAsync,
+        ILogger<MainWindowViewModel>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(systemMetricsService);
         ArgumentNullException.ThrowIfNull(uiDispatcher);
@@ -206,6 +154,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         _cpuHistoryBuffer = new BoundedHistory<SystemMetricsSnapshot>(cpuHistoryCapacity);
         _samplingIntervalTicks = samplingInterval.Ticks;
         _delayAsync = delayAsync;
+        _logger = logger ??
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<MainWindowViewModel>.Instance;
         _animationController.FrameChanged += OnAnimationFrameChanged;
         _animationController.Faulted += OnAnimationFaulted;
         _animationController.UpdateInterval(CpuAnimationSpeedMapper.SlowestInterval);
@@ -220,7 +170,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         OverlayMode = state.AppliedMode ?? state.RequestedMode;
         HasAppliedOverlayMode = state.AppliedMode.HasValue;
         IsOverlayFaulted = state.IsFaulted;
-        OverlayErrorMessage = additionalError ?? state.LastError;
+        OverlayErrorMessage = additionalError ?? (state.LastError is null
+            ? null
+            : "互動模式套用失敗，已保留目前可用狀態。");
     }
 
     internal void ReportOverlayError(string message)
@@ -254,13 +206,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     {
         ArgumentNullException.ThrowIfNull(state);
 
-        IsOverlayVisible = state.IsVisible;
-        IsOverlayTopmost = state.IsTopmost;
-        IsFullscreenDetected = state.IsFullscreenDetected;
-        IsForegroundOnOverlayMonitor = state.IsForegroundOnOverlayMonitor;
-        ForegroundDisplayDiagnostic = state.ForegroundDiagnostic;
-        OverlayMonitorDiagnostic = state.OverlayMonitorDiagnostic;
-        DisplayPolicyFault = state.Fault;
+        DisplayPolicyFault = state.Fault is null
+            ? null
+            : "全螢幕顯示政策暫時無法判斷，Dashboard 將保持顯示。";
     }
 
     public bool Start()
@@ -285,6 +233,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
             _samplingTask = Task.Run(
                 () => RunSamplingLoopAsync(cancellationToken),
                 CancellationToken.None);
+            TryLog(() => _logger.LogDebug(
+                "Metrics sampling started. {Operation} {Subsystem}",
+                "StartSampling",
+                "Metrics"));
 
             return true;
         }
@@ -304,6 +256,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
             IsSampling = false;
             SamplingStatus = "Stopped";
         }
+        TryLog(() => _logger.LogDebug(
+            "Metrics sampling stopped. {Operation} {Subsystem}",
+            "StopSampling",
+            "Metrics"));
 
         if (samplingTask is not null)
         {
@@ -386,7 +342,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         }
         catch (Exception exception)
         {
-            AnimationErrorMessage = $"Run-cat animation lifecycle failed: {exception.Message}";
+            TryLog(() => _logger.LogError(
+                exception,
+                "Run-cat animation lifecycle failed. {Operation} {Subsystem} {FaultState} {HResult}",
+                isVisible ? "StartAnimation" : "StopAnimation",
+                "Animation",
+                "Faulted",
+                exception.HResult));
+            AnimationErrorMessage = "Run Cat 動畫暫時發生錯誤。";
             IsAnimationRunning = _animationController.IsRunning;
         }
     }
@@ -484,6 +447,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
         UpdateAnimationSpeed();
 
+        if (_samplingFaultEpisode.Observe(isFaulted: false) == FaultEpisodeTransition.Recovered)
+        {
+            TryLog(() => _logger.LogInformation(
+                "Metrics sampling recovered. {Operation} {Subsystem} {FaultState}",
+                "SampleSystemMetrics",
+                "Metrics",
+                "Recovered"));
+        }
+
         ErrorMessage = null;
         SamplingStatus = snapshot.CpuUsagePercent is double currentCpuUsage &&
                          double.IsFinite(currentCpuUsage)
@@ -500,12 +472,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         TimeSpan interval = CpuAnimationSpeedMapper.Map(averageCpu);
 
         _animationController.UpdateInterval(interval);
-        AnimationAverageCpuText = averageCpu.HasValue
-            ? string.Create(CultureInfo.InvariantCulture, $"{averageCpu.Value:F1}%")
-            : "--";
-        AnimationIntervalText = string.Create(
-            CultureInfo.InvariantCulture,
-            $"{interval.TotalMilliseconds:F0} ms/frame");
     }
 
     private void OnAnimationFrameChanged(int frameIndex)
@@ -515,12 +481,23 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
     private void OnAnimationFaulted(string message)
     {
-        AnimationErrorMessage = message;
+        AnimationErrorMessage = "Run Cat 動畫暫時發生錯誤。";
     }
 
     private void ApplySamplingError(Exception exception)
     {
-        ErrorMessage = $"Sampling failed: {exception.Message}";
+        if (_samplingFaultEpisode.Observe(isFaulted: true) == FaultEpisodeTransition.Failed)
+        {
+            int? nativeErrorCode = (exception as Win32Exception)?.NativeErrorCode;
+            TryLog(() => _logger.LogError(
+                exception,
+                "Metrics sampling failed. {Operation} {Subsystem} {FaultState} {NativeErrorCode}",
+                "SampleSystemMetrics",
+                "Metrics",
+                "Faulted",
+                nativeErrorCode));
+        }
+        ErrorMessage = "系統資訊取樣失敗，將自動重試。";
         SamplingStatus = "Sampling error; retrying";
     }
 
@@ -529,6 +506,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         const double bytesPerGibibyte = 1024d * 1024d * 1024d;
         double gibibytes = bytes / bytesPerGibibyte;
         return string.Create(CultureInfo.InvariantCulture, $"{gibibytes:F2} GiB");
+    }
+
+    private static void TryLog(Action log)
+    {
+        try
+        {
+            log();
+        }
+        catch
+        {
+            // Logging must not alter sampling or presentation state.
+        }
     }
 
     partial void OnOverlayModeChanged(OverlayInteractionMode value)
@@ -569,23 +558,4 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         DisplayPolicyRequested?.Invoke(value);
     }
 
-    partial void OnIsOverlayVisibleChanged(bool value)
-    {
-        OnPropertyChanged(nameof(AppliedDisplayPolicyText));
-    }
-
-    partial void OnIsOverlayTopmostChanged(bool value)
-    {
-        OnPropertyChanged(nameof(AppliedDisplayPolicyText));
-    }
-
-    partial void OnIsFullscreenDetectedChanged(bool value)
-    {
-        OnPropertyChanged(nameof(FullscreenDisplayStatusText));
-    }
-
-    partial void OnIsForegroundOnOverlayMonitorChanged(bool value)
-    {
-        OnPropertyChanged(nameof(FullscreenDisplayStatusText));
-    }
 }

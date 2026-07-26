@@ -25,85 +25,20 @@
             BorderBrush="{DynamicResource OverlayBorderBrush}"
             BorderThickness="1"
             CornerRadius="10">
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-
-            <Border Padding="4,2,4,8"
-                    Background="Transparent"
-                    Cursor="SizeAll"
-                    MouseLeftButtonDown="OnDragSurfaceMouseLeftButtonDown">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-
-                    <StackPanel>
-                        <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                                   FontSize="18"
-                                   FontWeight="SemiBold"
-                                   Text="RunCatDashboard" />
-                        <TextBlock Margin="0,2,0,0"
-                                   Foreground="{DynamicResource OverlayMutedTextBrush}"
-                                   Text="Drag this panel while Interactive" />
-                    </StackPanel>
-
-                    <Border Grid.Column="1"
-                            Padding="10,4"
-                            VerticalAlignment="Center"
-                            Background="{DynamicResource OverlayModeBackgroundBrush}"
-                            CornerRadius="14">
-                        <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                                   FontWeight="SemiBold"
-                                   Text="{Binding OverlayModeText}" />
-                    </Border>
-                </Grid>
-            </Border>
-
-            <ScrollViewer Grid.Row="1"
-                          HorizontalScrollBarVisibility="Disabled"
-                          VerticalScrollBarVisibility="Hidden">
-                <StackPanel>
-                    <Grid Margin="0,2,0,8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel>
-                            <TextBlock Foreground="{DynamicResource OverlayWarningBrush}"
-                                       Text="{Binding OverlayHotKeyText}"
-                                       TextWrapping="Wrap" />
-                            <TextBlock Margin="0,2,8,0"
-                                       Foreground="{DynamicResource OverlayErrorBrush}"
-                                       Text="{Binding OverlayErrorMessage}"
-                                       TextWrapping="Wrap" />
-                            <TextBlock Margin="0,2,8,0"
-                                       Foreground="{DynamicResource OverlayErrorBrush}"
-                                       Text="{Binding HotKeyErrorMessage}"
-                                       TextWrapping="Wrap" />
-                            <TextBlock Margin="0,2,8,0"
-                                       Foreground="{DynamicResource OverlayErrorBrush}"
-                                       Text="{Binding TrayErrorMessage}"
-                                       TextWrapping="Wrap" />
-                        </StackPanel>
-                        <Button Grid.Column="1"
-                                Padding="10,4"
-                                VerticalAlignment="Top"
-                                Click="OnCloseButtonClick"
-                                Content="Close"
-                                Visibility="{Binding IsInteractive, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                    </Grid>
-
-                    <Separator Margin="0,0,0,8" />
-
-                    <Grid Margin="0,0,0,8">
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Hidden">
+            <StackPanel x:Name="OverlayContent">
+                    <Grid x:Name="OverlayTopRow"
+                          Margin="0,0,0,8"
+                          Background="Transparent"
+                          Cursor="SizeAll"
+                          MouseLeftButtonDown="OnDragSurfaceMouseLeftButtonDown">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="98" />
                             <ColumnDefinition Width="12" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <Border Width="98"
                                 Height="66"
@@ -129,24 +64,42 @@
                         </Border>
                         <StackPanel Grid.Column="2"
                                     VerticalAlignment="Center">
-                            <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                                       FontSize="16"
-                                       FontWeight="SemiBold"
-                                       Text="Run Cat" />
-                            <TextBlock Margin="0,3,0,0"
-                                       Foreground="{DynamicResource OverlaySecondaryTextBrush}"
-                                       Text="{Binding AnimationAverageCpuText, StringFormat='3-sample CPU: {0}'}" />
+                            <TextBlock Foreground="{DynamicResource OverlayErrorBrush}"
+                                       Text="{Binding OverlayErrorMessage}"
+                                       TextWrapping="Wrap" />
                             <TextBlock Margin="0,2,0,0"
-                                       Foreground="{DynamicResource OverlayMutedTextBrush}"
-                                       Text="{Binding AnimationIntervalText}" />
+                                       Foreground="{DynamicResource OverlayErrorBrush}"
+                                       Text="{Binding HotKeyErrorMessage}"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Margin="0,2,0,0"
+                                       Foreground="{DynamicResource OverlayErrorBrush}"
+                                       Text="{Binding TrayErrorMessage}"
+                                       TextWrapping="Wrap" />
                             <TextBlock Margin="0,2,0,0"
                                        Foreground="{DynamicResource OverlayErrorBrush}"
                                        Text="{Binding AnimationErrorMessage}"
                                        TextWrapping="Wrap" />
                         </StackPanel>
+                        <StackPanel Grid.Column="4"
+                                    HorizontalAlignment="Right"
+                                    Orientation="Horizontal"
+                                    VerticalAlignment="Center">
+                            <Border Padding="10,4"
+                                    HorizontalAlignment="Right"
+                                    Background="{DynamicResource OverlayModeBackgroundBrush}"
+                                    CornerRadius="14">
+                                <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
+                                           FontWeight="SemiBold"
+                                           Text="{Binding OverlayModeText}" />
+                            </Border>
+                            <Button Margin="8,0,0,0"
+                                    Padding="10,4"
+                                    HorizontalAlignment="Right"
+                                    Click="OnCloseButtonClick"
+                                    Content="Close"
+                                    Visibility="{Binding IsInteractive, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        </StackPanel>
                     </Grid>
-
-                    <Separator Margin="0,0,0,8" />
 
                     <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
                                FontWeight="SemiBold"
@@ -154,21 +107,6 @@
                     <ComboBox Margin="0,5,0,0"
                               ItemsSource="{Binding DisplayPolicies}"
                               SelectedItem="{Binding RequestedDisplayPolicy, Mode=TwoWay}" />
-                    <TextBlock Margin="0,5,0,0"
-                               Foreground="{DynamicResource OverlaySecondaryTextBrush}"
-                               Text="{Binding AppliedDisplayPolicyText}" />
-                    <TextBlock Margin="0,2,0,0"
-                               Foreground="{DynamicResource OverlaySecondaryTextBrush}"
-                               Text="{Binding FullscreenDisplayStatusText}"
-                               TextWrapping="Wrap" />
-                    <TextBlock Margin="0,2,0,0"
-                               Foreground="{DynamicResource OverlayMutedTextBrush}"
-                               Text="{Binding ForegroundDisplayDiagnostic}"
-                               TextWrapping="Wrap" />
-                    <TextBlock Margin="0,2,0,0"
-                               Foreground="{DynamicResource OverlayMutedTextBrush}"
-                               Text="{Binding OverlayMonitorDiagnostic}"
-                               TextWrapping="Wrap" />
                     <TextBlock Margin="0,2,0,8"
                                Foreground="{DynamicResource OverlayErrorBrush}"
                                Text="{Binding DisplayPolicyFault}"
@@ -261,8 +199,7 @@
                             </ItemsControl>
                         </Border>
                     </StackPanel>
-                </StackPanel>
-            </ScrollViewer>
-        </Grid>
+            </StackPanel>
+        </ScrollViewer>
     </Border>
 </Window>

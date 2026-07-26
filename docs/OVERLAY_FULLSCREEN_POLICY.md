@@ -40,6 +40,12 @@ fullscreen observation 不會把暫時 actual hidden 寫回 settings。
 
 DWM 與 fallback 均失敗、monitor 查詢失敗或 callback／timer／dispatcher／政策套用失敗時，保留可診斷 fault 並採 fail-visible。後續成功 observation 會清除 transient observation/application fault，恢復正常 applied state。
 
+每秒 reconciliation 不逐次寫日誌。只有 fullscreen／visibility／topmost semantic
+transition、fault episode 的第一次 failure及 recovery會記錄；Win32 operation、error
+code／HRESULT與 requested／applied／fault context進 structured log。Overlay 不再顯示
+foreground HWND、class、bounds、monitor或 Visible／Topmost raw diagnostics，只保留
+policy ComboBox及必要的精簡使用者 fault。
+
 ## 監測 lifecycle
 
 - `EVENT_SYSTEM_FOREGROUND` WinEvent hook 在 foreground 改變時立即重新評估。

@@ -73,7 +73,7 @@ public sealed class RunAtLoginServiceTests
 
         Assert.True(state.Requested);
         Assert.False(state.Applied);
-        Assert.Contains("denied", state.Fault);
+        Assert.DoesNotContain("denied", state.Fault);
     }
 
     private sealed class FakeRegistry : IRunRegistry

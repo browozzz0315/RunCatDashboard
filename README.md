@@ -12,6 +12,8 @@ V1 目標是建立具有跑貓動畫、系統資訊與半透明 Dashboard 的 WP
 - MVVM
 - CommunityToolkit.Mvvm
 - Microsoft.Extensions.DependencyInjection
+- Microsoft.Extensions.Logging
+- NLog（本機 rolling diagnostic file）
 - Win32 Interop
 - xUnit
 
@@ -90,6 +92,13 @@ dotnet build
 ```powershell
 dotnet test
 ```
+
+## 診斷日誌
+
+正式診斷日誌位於 `%LocalAppData%\RunCatDashboard\Logs`，採每日與 5 MiB 單檔
+rolling、保留 7 天且 active file在內最多 14 個檔案。日誌不寫入 repository、執行或安裝
+目錄，也不會上傳。等級、短期 Trace、隱私與 failure policy 詳見
+[`docs/DIAGNOSTIC_LOGGING.md`](docs/DIAGNOSTIC_LOGGING.md)。
 
 ## 執行
 

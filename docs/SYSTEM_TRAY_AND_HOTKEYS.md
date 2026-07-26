@@ -105,6 +105,11 @@ fault；registration state 另保留 Win32 error code 供診斷，不直接把�
 當 UI 訊息。Dispose 只解除成功註冊的項目；解除失敗不拋出或靜默遺失，
 而會留在該項 registration fault state。
 
+Register／Unregister、tray initialization與 Explorer recovery failure會以 operation、
+hotkey ID、native error code／HRESULT及 requested／applied／fault context寫入 structured
+log。相同持續 fault只記第一次與 recovery；不得逐 tray animation frame記錄。UI仍只
+顯示使用者可理解且可處理的訊息，不顯示 raw Win32 diagnostic。
+
 ## Explorer recovery
 
 啟動時以 `RegisterWindowMessage("TaskbarCreated")` 取得 Windows registered

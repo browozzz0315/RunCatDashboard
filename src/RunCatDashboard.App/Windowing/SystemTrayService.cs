@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using RunCatDashboard.App.Diagnostics;
 using RunCatDashboard.App.Interop;
 
 namespace RunCatDashboard.App.Windowing;
@@ -12,6 +14,8 @@ internal sealed class SystemTrayService : ISystemTrayService
     private readonly IInteractionModeToggleAction _interactionToggleAction;
     private readonly IApplicationExitCoordinator _exitCoordinator;
     private readonly ITrayAnimationCoordinator _animationCoordinator;
+    private readonly ILogger<SystemTrayService> _logger;
+    private readonly FaultEpisodeTracker _faultEpisode = new();
     private int _taskbarCreatedMessage;
     private string? _serviceError;
     private bool _isInitialized;
@@ -23,7 +27,8 @@ internal sealed class SystemTrayService : ISystemTrayService
         IWindowVisibilityCoordinator visibilityCoordinator,
         IInteractionModeToggleAction interactionToggleAction,
         IApplicationExitCoordinator exitCoordinator,
-        ITrayAnimationCoordinator animationCoordinator)
+        ITrayAnimationCoordinator animationCoordinator,
+        ILogger<SystemTrayService>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(adapter);
         ArgumentNullException.ThrowIfNull(messageApi);
@@ -37,6 +42,8 @@ internal sealed class SystemTrayService : ISystemTrayService
         _interactionToggleAction = interactionToggleAction;
         _exitCoordinator = exitCoordinator;
         _animationCoordinator = animationCoordinator;
+        _logger = logger ??
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SystemTrayService>.Instance;
     }
 
     public string? LastError { get; private set; }
@@ -74,7 +81,8 @@ internal sealed class SystemTrayService : ISystemTrayService
         }
         catch (Exception exception)
         {
-            SetServiceError($"系統匣初始化失敗：{exception.Message}");
+            LogException("InitializeSystemTray", exception);
+            SetServiceError("系統匣初始化失敗，請重新啟動程式後再試。");
             DetachEvents();
             _animationCoordinator.Dispose();
             return false;
@@ -113,7 +121,8 @@ internal sealed class SystemTrayService : ISystemTrayService
         }
         catch (Exception exception)
         {
-            SetServiceError($"Explorer 重啟後恢復系統匣圖示失敗：{exception.Message}");
+            LogException("RecoverSystemTrayAfterExplorerRestart", exception);
+            SetServiceError("Explorer 重啟後無法恢復系統匣圖示，請重新啟動程式。");
         }
 
         return true;
@@ -135,7 +144,8 @@ internal sealed class SystemTrayService : ISystemTrayService
         }
         catch (Exception exception)
         {
-            SetServiceError($"釋放系統匣圖示失敗：{exception.Message}");
+            LogException("DisposeSystemTray", exception);
+            SetServiceError("系統匣結束清理未完整完成。");
         }
 
         DiagnosticChanged = null;
@@ -161,7 +171,8 @@ internal sealed class SystemTrayService : ISystemTrayService
         }
         catch (Exception exception)
         {
-            SetServiceError($"更新系統匣動畫選單狀態失敗：{exception.Message}");
+            LogException("UpdateTrayAnimationMenu", exception);
+            SetServiceError("系統匣選單暫時無法更新。");
         }
     }
 
@@ -177,7 +188,8 @@ internal sealed class SystemTrayService : ISystemTrayService
         }
         catch (Exception exception)
         {
-            SetServiceError($"更新系統匣選單狀態失敗：{exception.Message}");
+            LogException("UpdateTrayVisibilityMenu", exception);
+            SetServiceError("系統匣選單暫時無法更新。");
         }
     }
 
@@ -189,7 +201,8 @@ internal sealed class SystemTrayService : ISystemTrayService
         }
         catch (Exception exception)
         {
-            SetServiceError($"更新系統匣互動模式狀態失敗：{exception.Message}");
+            LogException("UpdateTrayInteractionMenu", exception);
+            SetServiceError("系統匣選單暫時無法更新。");
         }
     }
 
@@ -222,6 +235,30 @@ internal sealed class SystemTrayService : ISystemTrayService
         }
 
         LastError = message;
+        FaultEpisodeTransition transition = _faultEpisode.Observe(message is not null);
+        try
+        {
+            if (transition == FaultEpisodeTransition.Failed)
+            {
+                _logger.LogWarning(
+                    "System tray entered a fault episode. {Operation} {Subsystem} {FaultState}",
+                    "UpdateSystemTray",
+                    "SystemTray",
+                    "Faulted");
+            }
+            else if (transition == FaultEpisodeTransition.Recovered)
+            {
+                _logger.LogInformation(
+                    "System tray recovered. {Operation} {Subsystem} {FaultState}",
+                    "UpdateSystemTray",
+                    "SystemTray",
+                    "Recovered");
+            }
+        }
+        catch
+        {
+            // Logging must not suppress the existing diagnostic publication.
+        }
         DiagnosticChanged?.Invoke(message);
     }
 
@@ -236,5 +273,24 @@ internal sealed class SystemTrayService : ISystemTrayService
         _visibilityCoordinator.StateChanged -= OnVisibilityChanged;
         _interactionToggleAction.StateChanged -= OnInteractionStateChanged;
         _animationCoordinator.DiagnosticChanged -= OnAnimationDiagnosticChanged;
+    }
+
+    private void LogException(string operation, Exception exception)
+    {
+        try
+        {
+            _logger.LogError(
+                exception,
+                "System tray operation failed. {Operation} {Subsystem} {FaultState} {NativeErrorCode} {HResult}",
+                operation,
+                "SystemTray",
+                "Faulted",
+                (exception as System.ComponentModel.Win32Exception)?.NativeErrorCode,
+                exception.HResult);
+        }
+        catch
+        {
+            // Logging must not alter tray diagnostic state.
+        }
     }
 }

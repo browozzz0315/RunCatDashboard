@@ -1,3 +1,6 @@
+using Microsoft.Extensions.Logging;
+using RunCatDashboard.App.Diagnostics;
+
 namespace RunCatDashboard.App.Animation;
 
 internal sealed class RunCatAnimationController : IRunCatAnimationController
@@ -6,6 +9,8 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
 
     private readonly object _gate = new();
     private readonly IAnimationTimer _timer;
+    private readonly ILogger<RunCatAnimationController> _logger;
+    private readonly FaultEpisodeTracker _faultEpisode = new();
     private bool _isRunning;
     private bool _isDisposed;
     private long _generation;
@@ -15,12 +20,15 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
 
     internal RunCatAnimationController(
         IAnimationTimer timer,
-        int frameCount = DefaultFrameCount)
+        int frameCount = DefaultFrameCount,
+        ILogger<RunCatAnimationController>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(timer);
         ArgumentOutOfRangeException.ThrowIfLessThan(frameCount, 1);
 
         _timer = timer;
+        _logger = logger ??
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<RunCatAnimationController>.Instance;
         FrameCount = frameCount;
     }
 
@@ -103,6 +111,10 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
                     "The run-cat animation timer was already running unexpectedly.");
             }
 
+            TryLog(() => _logger.LogDebug(
+                "Run-cat animation started. {Operation} {Subsystem}",
+                "StartAnimation",
+                "Animation"));
             return true;
         }
         catch
@@ -134,6 +146,10 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
         }
 
         _timer.Stop();
+        TryLog(() => _logger.LogDebug(
+            "Run-cat animation stopped. {Operation} {Subsystem}",
+            "StopAnimation",
+            "Animation"));
     }
 
     public bool UpdateInterval(TimeSpan interval)
@@ -197,9 +213,11 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
 
         if (handlers is null)
         {
+            ReportRecoveryIfNeeded();
             return;
         }
 
+        bool didFault = false;
         foreach (Action<int> handler in handlers.GetInvocationList().Cast<Action<int>>())
         {
             try
@@ -208,14 +226,21 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
             }
             catch (Exception exception)
             {
+                didFault = true;
                 RecordFault(
                     generation,
-                    $"Publishing the run-cat frame failed: {exception.Message}");
+                    $"Publishing the run-cat frame failed: {exception.Message}",
+                    exception);
             }
+        }
+
+        if (!didFault)
+        {
+            ReportRecoveryIfNeeded();
         }
     }
 
-    private void RecordFault(long generation, string message)
+    private void RecordFault(long generation, string message, Exception? cause = null)
     {
         Action<string>? handlers;
         lock (_gate)
@@ -227,6 +252,34 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
 
             _lastFault = message;
             handlers = Faulted;
+        }
+
+        if (_faultEpisode.Observe(isFaulted: true) == FaultEpisodeTransition.Failed)
+        {
+            try
+            {
+                if (cause is null)
+                {
+                    _logger.LogWarning(
+                        "Run-cat animation entered a fault episode. {Operation} {Subsystem} {FaultState}",
+                        "RunAnimation",
+                        "Animation",
+                        "Faulted");
+                }
+                else
+                {
+                    _logger.LogError(
+                        cause,
+                        "Run-cat animation entered a fault episode. {Operation} {Subsystem} {FaultState} {HResult}",
+                        "PublishAnimationFrame",
+                        "Animation",
+                        "Faulted",
+                        cause.HResult);
+                }
+            }
+            catch
+            {
+            }
         }
 
         if (handlers is null)
@@ -251,6 +304,38 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
                     }
                 }
             }
+        }
+    }
+
+    private void ReportRecoveryIfNeeded()
+    {
+        if (_faultEpisode.Observe(isFaulted: false) != FaultEpisodeTransition.Recovered)
+        {
+            return;
+        }
+
+        try
+        {
+            _logger.LogInformation(
+                "Run-cat animation recovered. {Operation} {Subsystem} {FaultState}",
+                "RunAnimation",
+                "Animation",
+                "Recovered");
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryLog(Action log)
+    {
+        try
+        {
+            log();
+        }
+        catch
+        {
+            // Logging must not alter animation lifecycle or fault state.
         }
     }
 }

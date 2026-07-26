@@ -151,8 +151,8 @@ public sealed class SystemTrayServiceTests
 
         fixture.Service.TryHandleWindowMessage(fixture.MessageApi.Message);
 
-        Assert.Contains("恢復系統匣圖示失敗", fixture.Service.LastError);
-        Assert.Contains("shell unavailable", fixture.Service.LastError);
+        Assert.Contains("無法恢復系統匣圖示", fixture.Service.LastError);
+        Assert.DoesNotContain("shell unavailable", fixture.Service.LastError);
     }
 
     [Fact]
@@ -165,7 +165,7 @@ public sealed class SystemTrayServiceTests
         Assert.False(fixture.Service.Initialize());
 
         Assert.Contains("系統匣初始化失敗", fixture.Service.LastError);
-        Assert.Contains("載入 RunCatDashboard 系統匣圖示失敗", fixture.Service.LastError);
+        Assert.DoesNotContain("載入 RunCatDashboard 系統匣圖示失敗", fixture.Service.LastError);
     }
 
     [Fact]

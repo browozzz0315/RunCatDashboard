@@ -106,6 +106,17 @@ behind a singleton lifecycle service and never becomes `Application.MainWindow`.
 
 Responsible for P/Invoke declarations, native constants, safe wrappers around Windows handles, and native error conversion.
 
+### Diagnostic logging
+
+`Microsoft.Extensions.Logging` is the application abstraction and NLog is the
+local rolling-file provider. `ApplicationPaths` is the single source for the
+LocalAppData data and Logs directories. File logging starts only after primary
+single-instance ownership succeeds but before DI construction; `App` retains
+the logging runtime through explicit shutdown and final disposal. Services log
+structured lifecycle, semantic transition, first-failure, and recovery events;
+ViewModels retain only user-facing state. Full policy is documented in
+[`DIAGNOSTIC_LOGGING.md`](DIAGNOSTIC_LOGGING.md).
+
 ### Single application instance
 
 RunCatDashboard uses the fixed session-local named Mutex `Local\RunCatDashboard.SingleInstance` so only one instance runs in the current Windows user session. Ownership is checked immediately without waiting; an abandoned Mutex is treated as successfully acquired so an abnormal previous termination cannot permanently block startup. A second launch is rejected before the service provider or `MainWindow` is created; it shows a short message and exits normally. This does not wake, show, or focus the existing Overlay. Any future second-launch control of the existing instance requires a separately designed IPC mechanism.

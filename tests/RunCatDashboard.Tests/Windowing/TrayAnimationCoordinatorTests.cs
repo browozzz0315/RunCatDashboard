@@ -1,4 +1,6 @@
 using RunCatDashboard.App.Animation;
+using Microsoft.Extensions.Logging;
+using RunCatDashboard.Tests.Diagnostics;
 using RunCatDashboard.App.Windowing;
 
 namespace RunCatDashboard.Tests.Windowing;
@@ -64,15 +66,23 @@ public sealed class TrayAnimationCoordinatorTests
     {
         var adapter = new FakeTrayIconAdapter();
         var animation = new FakeRunCatAnimationController();
-        using var coordinator = new TrayAnimationCoordinator(adapter, animation);
+        var logger = new RecordingLogger<TrayAnimationCoordinator>();
+        using var coordinator = new TrayAnimationCoordinator(adapter, animation, logger);
         coordinator.Initialize();
         adapter.FrameFailure = new InvalidOperationException("configured frame failure");
 
         animation.FireFrame(6);
+        animation.FireFrame(7);
+        adapter.FrameFailure = null;
+        animation.FireFrame(1);
 
-        Assert.Equal(0, adapter.LastAnimatedFrame);
-        Assert.Contains("保留上一個有效圖示", coordinator.LastError);
-        Assert.Contains("configured frame failure", coordinator.LastError);
+        Assert.Equal(1, adapter.LastAnimatedFrame);
+        Assert.Null(coordinator.LastError);
+        Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error);
+        Assert.Single(logger.Entries, entry =>
+            entry.Level == LogLevel.Information &&
+            entry.Properties.TryGetValue("FaultState", out object? state) &&
+            Equals(state, "Recovered"));
     }
 
     [Fact]
@@ -91,8 +101,8 @@ public sealed class TrayAnimationCoordinatorTests
 
         Assert.True(coordinator.IsAnimated);
         Assert.True(adapter.IsStatic);
-        Assert.Contains("已回退為靜態圖示", coordinator.LastError);
-        Assert.Contains("configured resource failure", coordinator.LastError);
+        Assert.Contains("已切換為靜態圖示", coordinator.LastError);
+        Assert.DoesNotContain("configured resource failure", coordinator.LastError);
     }
 
     [Fact]

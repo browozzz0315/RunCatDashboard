@@ -1,7 +1,9 @@
-﻿using System.Windows;
+using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
-using System.IO;
+using Microsoft.Extensions.Logging;
+using System.Reflection;
 using RunCatDashboard.App.Animation;
+using RunCatDashboard.App.Diagnostics;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Views;
@@ -23,6 +25,10 @@ public partial class App : System.Windows.Application
     private readonly IApplicationInstanceGuard _instanceGuard;
     private readonly ApplicationStartupCoordinator _startupCoordinator;
     private ServiceProvider? _serviceProvider;
+    private IApplicationPaths? _applicationPaths;
+    private IApplicationLoggingRuntime? _loggingRuntime;
+    private ILogger? _lifecycleLogger;
+    private IReadOnlyList<string> _startupArguments = Array.Empty<string>();
 
     public App()
         : this(new WindowsApplicationInstanceGuard())
@@ -39,6 +45,7 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        _startupArguments = e.Args;
 
         try
         {
@@ -59,6 +66,21 @@ public partial class App : System.Windows.Application
                 MessageBoxImage.Error);
             Shutdown(1);
         }
+        catch (Exception exception)
+        {
+            _lifecycleLogger?.LogCritical(
+                exception,
+                "Application startup failed. {Operation} {Subsystem} {ApplicationVersion}",
+                "StartPrimaryInstance",
+                "Startup",
+                GetApplicationVersion());
+            MessageBox.Show(
+                $"RunCatDashboard 啟動失敗：{exception.Message}",
+                "RunCatDashboard",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Shutdown(1);
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -70,6 +92,11 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            _lifecycleLogger?.LogError(
+                exception,
+                "Dependency injection cleanup failed. {Operation} {Subsystem}",
+                "DisposeServiceProvider",
+                "Shutdown");
             (cleanupFailures ??= []).Add(exception);
         }
 
@@ -79,7 +106,28 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            _lifecycleLogger?.LogError(
+                exception,
+                "Single-instance cleanup failed. {Operation} {Subsystem}",
+                "ReleaseMutex",
+                "SingleInstance");
             (cleanupFailures ??= []).Add(exception);
+        }
+
+        try
+        {
+            _lifecycleLogger?.LogInformation(
+                "Application exit completed. {Operation} {Subsystem}",
+                "OnExit",
+                "Shutdown");
+            _loggingRuntime?.FlushAsync(TimeSpan.FromSeconds(2))
+                .GetAwaiter().GetResult();
+            _loggingRuntime?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Trace.WriteLine(
+                $"RunCatDashboard final logging cleanup failed: {exception.Message}");
         }
 
         if (cleanupFailures is not null)
@@ -97,8 +145,31 @@ public partial class App : System.Windows.Application
 
     private void StartPrimaryInstance()
     {
+        _applicationPaths = ApplicationPaths.CreateDefault();
+        string buildConfiguration = typeof(App).Assembly
+            .GetCustomAttribute<AssemblyConfigurationAttribute>()?
+            .Configuration ?? "Release";
+        LoggingPolicy loggingPolicy = LoggingPolicy.Create(
+            buildConfiguration,
+            _startupArguments);
+        _loggingRuntime = ApplicationLoggingRuntime.TryCreate(
+            _applicationPaths,
+            loggingPolicy);
+        _lifecycleLogger = _loggingRuntime.LoggerFactory.CreateLogger(
+            LoggingPolicy.LifecycleCategory);
+        _lifecycleLogger.LogInformation(
+            "Primary application startup began. {Operation} {Subsystem} {ApplicationVersion} {BuildConfiguration} {WindowsSessionId}",
+            "StartPrimaryInstance",
+            "Startup",
+            GetApplicationVersion(),
+            buildConfiguration,
+            _applicationPaths.WindowsSessionId);
+
         var services = new ServiceCollection();
-        ConfigureServices(services);
+        ConfigureServices(
+            services,
+            _applicationPaths,
+            _loggingRuntime);
         _serviceProvider = services.BuildServiceProvider();
 
         ISettingsService settings = _serviceProvider.GetRequiredService<ISettingsService>();
@@ -117,6 +188,10 @@ public partial class App : System.Windows.Application
         var mainWindow = _serviceProvider.GetRequiredService<MainWindow>();
         MainWindow = mainWindow;
         mainWindow.PrepareForStartup();
+        _lifecycleLogger.LogInformation(
+            "Primary application startup completed. {Operation} {Subsystem}",
+            "PrepareForStartup",
+            "Startup");
     }
 
     private static void ShowAlreadyRunningMessage()
@@ -128,17 +203,28 @@ public partial class App : System.Windows.Application
             MessageBoxImage.Information);
     }
 
-    private static void ConfigureServices(IServiceCollection services)
+    private static void ConfigureServices(
+        IServiceCollection services,
+        IApplicationPaths applicationPaths,
+        IApplicationLoggingRuntime loggingRuntime)
     {
-        string settingsDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "RunCatDashboard");
+        services.AddLogging();
+        services.AddSingleton(loggingRuntime.LoggerFactory);
+        services.AddSingleton(applicationPaths);
+        services.AddSingleton(loggingRuntime);
         services.AddSingleton<ISettingsStore>(
-            _ => new JsonSettingsStore(settingsDirectory, new PhysicalSettingsFileSystem()));
+            _ => new JsonSettingsStore(
+                applicationPaths.DataDirectory,
+                new PhysicalSettingsFileSystem()));
         services.AddSingleton<ISettingsService>(provider =>
-            new SettingsService(provider.GetRequiredService<ISettingsStore>()));
-        services.AddSingleton<IRunAtLoginService>(
-            _ => new RunAtLoginService(new CurrentUserRunRegistry(), () => Environment.ProcessPath));
+            new SettingsService(
+                provider.GetRequiredService<ISettingsStore>(),
+                logger: provider.GetRequiredService<ILogger<SettingsService>>()));
+        services.AddSingleton<IRunAtLoginService>(provider =>
+            new RunAtLoginService(
+                new CurrentUserRunRegistry(),
+                () => Environment.ProcessPath,
+                provider.GetRequiredService<ILogger<RunAtLoginService>>()));
         services.AddSingleton<ISystemMetricsService, WindowsSystemMetricsService>();
         services.AddSingleton<IUiDispatcher>(
             _ => new WpfUiDispatcher(Current.Dispatcher));
@@ -146,9 +232,12 @@ public partial class App : System.Windows.Application
             _ => new DispatcherAnimationTimer(Current.Dispatcher));
         services.AddSingleton<IRunCatAnimationController>(provider =>
             new RunCatAnimationController(
-                provider.GetRequiredService<IAnimationTimer>()));
-        services.AddSingleton<IOverlayWindowController>(
-            _ => new OverlayWindowController(new Win32NativeWindowStyleApi()));
+                provider.GetRequiredService<IAnimationTimer>(),
+                logger: provider.GetRequiredService<ILogger<RunCatAnimationController>>()));
+        services.AddSingleton<IOverlayWindowController>(provider =>
+            new OverlayWindowController(
+                new Win32NativeWindowStyleApi(),
+                provider.GetRequiredService<ILogger<OverlayWindowController>>()));
         services.AddSingleton<IOverlayModeCoordinator>(provider =>
             new OverlayModeCoordinator(
                 provider.GetRequiredService<IOverlayWindowController>()));
@@ -162,9 +251,14 @@ public partial class App : System.Windows.Application
             _ => new ApplicationExitCoordinator());
         services.AddSingleton(provider => new ExplicitShutdownCoordinator(
             provider.GetRequiredService<IWindowVisibilityCoordinator>(),
-            provider.GetRequiredService<ISettingsService>()));
-        services.AddSingleton<IGlobalHotKeyController>(
-            _ => new GlobalHotKeyController(new Win32GlobalHotKeyApi()));
+            provider.GetRequiredService<ISettingsService>(),
+            provider.GetRequiredService<IApplicationLoggingRuntime>(),
+            provider.GetRequiredService<ILoggerFactory>().CreateLogger(
+                LoggingPolicy.LifecycleCategory)));
+        services.AddSingleton<IGlobalHotKeyController>(provider =>
+            new GlobalHotKeyController(
+                new Win32GlobalHotKeyApi(),
+                provider.GetRequiredService<ILogger<GlobalHotKeyController>>()));
         services.AddSingleton<IOverlayHotKeyMessageHandler>(provider =>
             new OverlayHotKeyMessageHandler(
                 provider.GetRequiredService<IGlobalHotKeyController>(),
@@ -177,7 +271,8 @@ public partial class App : System.Windows.Application
         services.AddSingleton<ITrayAnimationCoordinator>(provider =>
             new TrayAnimationCoordinator(
                 provider.GetRequiredService<ITrayIconAdapter>(),
-                provider.GetRequiredService<IRunCatAnimationController>()));
+                provider.GetRequiredService<IRunCatAnimationController>(),
+                provider.GetRequiredService<ILogger<TrayAnimationCoordinator>>()));
         services.AddSingleton<ISystemTrayService>(provider =>
             new SystemTrayService(
                 provider.GetRequiredService<ITrayIconAdapter>(),
@@ -185,13 +280,17 @@ public partial class App : System.Windows.Application
                 provider.GetRequiredService<IWindowVisibilityCoordinator>(),
                 provider.GetRequiredService<IInteractionModeToggleAction>(),
                 provider.GetRequiredService<IApplicationExitCoordinator>(),
-                provider.GetRequiredService<ITrayAnimationCoordinator>()));
+                provider.GetRequiredService<ITrayAnimationCoordinator>(),
+                provider.GetRequiredService<ILogger<SystemTrayService>>()));
         services.AddSingleton<IWindowWorkAreaProvider, Win32WindowWorkAreaProvider>();
         services.AddSingleton<IOverlayDisplayMonitor>(
-            _ => new OverlayDisplayMonitor(
+            provider => new OverlayDisplayMonitor(
                 new FullscreenObservationSource(new Win32FullscreenApi()),
                 new Win32ForegroundWindowEventHook(),
-                new ReconciliationTimer()));
+                new ReconciliationTimer(),
+                logger: provider.GetRequiredService<ILogger<OverlayDisplayMonitor>>(),
+                highFrequencyLogger: provider.GetRequiredService<ILoggerFactory>().CreateLogger(
+                    $"{LoggingPolicy.HighFrequencyCategoryPrefix}.Fullscreen")));
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<ISettingsApplicationService>(provider =>
             new SettingsApplicationService(
@@ -206,5 +305,8 @@ public partial class App : System.Windows.Application
             new SettingsWindowService(() => provider.GetRequiredService<SettingsWindow>()));
         services.AddSingleton<MainWindow>();
     }
+
+    private static string GetApplicationVersion() =>
+        typeof(App).Assembly.GetName().Version?.ToString() ?? "unknown";
 }
 

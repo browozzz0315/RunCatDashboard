@@ -1,3 +1,6 @@
+using Microsoft.Extensions.Logging;
+using RunCatDashboard.App.Diagnostics;
+
 namespace RunCatDashboard.App.Windowing;
 
 public interface IOverlayDisplayMonitor : IDisposable
@@ -50,6 +53,9 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
     private readonly IReconciliationTimer _timer;
     private readonly OverlayDisplayPolicyCoordinator _coordinator = new();
     private readonly TimeSpan _reconciliationInterval;
+    private readonly ILogger<OverlayDisplayMonitor> _logger;
+    private readonly ILogger _highFrequencyLogger;
+    private readonly FaultEpisodeTracker _faultEpisode = new();
     private FullscreenObservation _lastObservation = FullscreenObservation.Pending;
     private OverlayDisplayPolicyState _state;
     private nint _overlayWindowHandle;
@@ -60,12 +66,15 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
     private long _latestEvaluationSequence;
     private string? _lifecycleFault;
     private string? _externalFault;
+    private DisplaySemanticState? _lastLoggedSemanticState;
 
     internal OverlayDisplayMonitor(
         IFullscreenObservationSource observationSource,
         IForegroundWindowEventHook foregroundHook,
         IReconciliationTimer timer,
-        TimeSpan? reconciliationInterval = null)
+        TimeSpan? reconciliationInterval = null,
+        ILogger<OverlayDisplayMonitor>? logger = null,
+        ILogger? highFrequencyLogger = null)
     {
         ArgumentNullException.ThrowIfNull(observationSource);
         ArgumentNullException.ThrowIfNull(foregroundHook);
@@ -80,6 +89,10 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
         _observationSource = observationSource;
         _foregroundHook = foregroundHook;
         _timer = timer;
+        _logger = logger ??
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<OverlayDisplayMonitor>.Instance;
+        _highFrequencyLogger = highFrequencyLogger ??
+            Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
         _state = _coordinator.State;
     }
 
@@ -123,6 +136,10 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
 
         TryStartLifecycleComponents(generation);
         EvaluateAndPublish(generation, clearExternalFault: true);
+        TryLog(() => _logger.LogDebug(
+            "Fullscreen monitoring started. {Operation} {Subsystem}",
+            "StartFullscreenMonitor",
+            "Fullscreen"));
         return true;
     }
 
@@ -221,6 +238,7 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
         }
         catch (Exception exception)
         {
+            TryLogException("StopForegroundHook", exception);
             (failures ??= []).Add($"Stopping the foreground hook failed: {exception.Message}");
         }
 
@@ -230,6 +248,7 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
         }
         catch (Exception exception)
         {
+            TryLogException("StopReconciliationTimer", exception);
             (failures ??= []).Add($"Stopping the reconciliation timer failed: {exception.Message}");
         }
 
@@ -241,6 +260,10 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
                 _state = BuildStateLocked(_lastObservation);
             }
         }
+        TryLog(() => _logger.LogDebug(
+            "Fullscreen monitoring stopped. {Operation} {Subsystem}",
+            "StopFullscreenMonitor",
+            "Fullscreen"));
     }
 
     public void Dispose()
@@ -262,6 +285,7 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
         }
         catch (Exception exception)
         {
+            TryLogException("DisposeForegroundHook", exception);
             (failures ??= []).Add($"Disposing the foreground hook failed: {exception.Message}");
         }
 
@@ -271,6 +295,7 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
         }
         catch (Exception exception)
         {
+            TryLogException("DisposeReconciliationTimer", exception);
             (failures ??= []).Add($"Disposing the reconciliation timer failed: {exception.Message}");
         }
 
@@ -353,6 +378,7 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
                 "Overlay monitor observation failed",
                 $"Fullscreen observation threw unexpectedly: {exception.Message}");
         }
+        TryLogHighFrequencyObservation(evaluationSequence, observation);
 
         OverlayDisplayPolicyState next;
         lock (_gate)
@@ -437,6 +463,7 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
 
             try
             {
+                LogSemanticTransition(next);
                 handler?.Invoke(next);
             }
             catch (Exception exception)
@@ -459,6 +486,10 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
                 $"Publishing the display policy state failed: {exception.Message}";
             _state = BuildStateLocked(_lastObservation);
         }
+        if (_faultEpisode.Observe(isFaulted: true) == FaultEpisodeTransition.Failed)
+        {
+            TryLogException("PublishFullscreenPolicyState", exception);
+        }
     }
 
     private static string? CombineFaults(params string?[] faults)
@@ -468,5 +499,126 @@ internal sealed class OverlayDisplayMonitor : IOverlayDisplayMonitor
             .Distinct(StringComparer.Ordinal)
             .ToArray()!;
         return present.Length == 0 ? null : string.Join(" ", present);
+    }
+
+    private void LogSemanticTransition(OverlayDisplayPolicyState state)
+    {
+        try
+        {
+            FaultEpisodeTransition faultTransition = _faultEpisode.Observe(state.Fault is not null);
+            if (faultTransition == FaultEpisodeTransition.Failed)
+            {
+                _logger.LogWarning(
+                    "Fullscreen observation failed; fail-visible policy remains active. {Operation} {Subsystem} {FaultState} {NativeErrorCode} {HResult} {FullscreenPolicy} {RequestedState} {AppliedState}",
+                    state.FaultOperation ?? "ObserveFullscreen",
+                    "Fullscreen",
+                    "Faulted",
+                    state.NativeErrorCode,
+                    state.HResultCode,
+                    state.RequestedPolicy,
+                    state.RequestedPolicy,
+                    state.IsVisible);
+            }
+            else if (faultTransition == FaultEpisodeTransition.Recovered)
+            {
+                _logger.LogInformation(
+                    "Fullscreen observation recovered. {Operation} {Subsystem} {FaultState} {FullscreenPolicy}",
+                    "ObserveFullscreen",
+                    "Fullscreen",
+                    "Recovered",
+                    state.RequestedPolicy);
+            }
+
+            var semantic = new DisplaySemanticState(
+                state.RequestedPolicy,
+                state.IsVisible,
+                state.IsTopmost,
+                state.IsFullscreenDetected,
+                state.IsForegroundOnOverlayMonitor);
+            if (_lastLoggedSemanticState == semantic)
+            {
+                return;
+            }
+
+            DisplaySemanticState? previous = _lastLoggedSemanticState;
+            _lastLoggedSemanticState = semantic;
+            _logger.LogInformation(
+                "Fullscreen policy state changed. {Operation} {Subsystem} {FullscreenPolicy} {RequestedState} {AppliedState} {IsFullscreen} {IsForegroundOnOverlayMonitor} {PreviousState}",
+                "ApplyFullscreenPolicy",
+                "Fullscreen",
+                state.RequestedPolicy,
+                state.RequestedPolicy,
+                state.IsVisible,
+                state.IsFullscreenDetected,
+                state.IsForegroundOnOverlayMonitor,
+                previous);
+        }
+        catch
+        {
+            // Logging must never change fullscreen requested/applied/fault state.
+        }
+    }
+
+    private sealed record DisplaySemanticState(
+        OverlayDisplayPolicy Policy,
+        bool IsVisible,
+        bool IsTopmost,
+        bool IsFullscreen,
+        bool IsOnOverlayMonitor);
+
+    private void TryLogHighFrequencyObservation(
+        long evaluationSequence,
+        FullscreenObservation observation)
+    {
+        try
+        {
+            if (_highFrequencyLogger.IsEnabled(LogLevel.Trace))
+            {
+                _highFrequencyLogger.LogTrace(
+                    "Fullscreen reconciliation observation. {Operation} {Subsystem} {EvaluationSequence} {IsFullscreen} {IsOnOverlayMonitor} {FaultState}",
+                    "ReconcileFullscreen",
+                    "Fullscreen",
+                    evaluationSequence,
+                    observation.IsFullscreen,
+                    observation.IsOnOverlayMonitor,
+                    observation.Fault is null ? "Healthy" : "Faulted");
+            }
+        }
+        catch
+        {
+            // Diagnostic Trace must not alter observation or policy state.
+        }
+    }
+
+    private void TryLogException(string operation, Exception exception)
+    {
+        try
+        {
+            _logger.LogError(
+                exception,
+                "Fullscreen lifecycle operation failed. {Operation} {Subsystem} {FaultState} {NativeErrorCode} {HResult} {FullscreenPolicy}",
+                operation,
+                "Fullscreen",
+                "Faulted",
+                (exception as System.ComponentModel.Win32Exception)?.NativeErrorCode,
+                exception.HResult,
+                State.RequestedPolicy);
+        }
+        catch
+        {
+            // Logging must not alter monitor lifecycle or policy state.
+        }
+    }
+
+    private static void TryLog(Action log)
+    {
+        try
+        {
+            log();
+        }
+        catch
+        {
+            // Logging must not alter monitor lifecycle or policy state.
+        }
     }
 }
