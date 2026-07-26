@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Interop;
 
 namespace RunCatDashboard.App.Windowing;
@@ -21,15 +22,20 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
 
     private readonly object _gate = new();
     private readonly INativeGlobalHotKeyApi _nativeApi;
+    private readonly ILogger<GlobalHotKeyController> _logger;
     private readonly Dictionary<GlobalHotKeyAction, Registration> _registrations;
     private nint _windowHandle;
     private bool _registrationAttempted;
     private bool _isDisposed;
 
-    internal GlobalHotKeyController(INativeGlobalHotKeyApi nativeApi)
+    internal GlobalHotKeyController(
+        INativeGlobalHotKeyApi nativeApi,
+        ILogger<GlobalHotKeyController>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(nativeApi);
         _nativeApi = nativeApi;
+        _logger = logger ??
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GlobalHotKeyController>.Instance;
         _registrations = new Dictionary<GlobalHotKeyAction, Registration>
         {
             [GlobalHotKeyAction.ToggleInteractionMode] = new(
@@ -150,6 +156,7 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
             };
             registration.NativeErrorCode =
                 (exception as Win32Exception)?.NativeErrorCode;
+            LogRegistrationFailure("RegisterHotKey", registration, exception);
         }
     }
 
@@ -168,6 +175,7 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
                 $"解除快捷鍵 {registration.GestureText} 失敗；程式結束前可能仍由系統保留。";
             registration.NativeErrorCode =
                 (exception as Win32Exception)?.NativeErrorCode;
+            LogRegistrationFailure("UnregisterHotKey", registration, exception);
         }
     }
 
@@ -197,5 +205,30 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
             IsRegistered,
             Fault,
             NativeErrorCode);
+    }
+
+    private void LogRegistrationFailure(
+        string operation,
+        Registration registration,
+        Exception exception)
+    {
+        try
+        {
+            _logger.LogError(
+                exception,
+                "Global hotkey operation failed. {Operation} {Subsystem} {HotKeyId} {RequestedState} {AppliedState} {FaultState} {NativeErrorCode} {HResult}",
+                operation,
+                "GlobalHotKey",
+                registration.Identifier,
+                operation == "RegisterHotKey" ? "Registered" : "Unregistered",
+                registration.IsRegistered,
+                "Faulted",
+                registration.NativeErrorCode,
+                exception.HResult);
+        }
+        catch
+        {
+            // Logging must not alter hotkey requested/applied/fault state.
+        }
     }
 }

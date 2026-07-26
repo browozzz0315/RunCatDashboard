@@ -8,8 +8,6 @@
         <SolidColorBrush x:Key="OverlayBorderBrush" Color="#807B8794" />
         <SolidColorBrush x:Key="OverlayPrimaryTextBrush" Color="#FFFFFFFF" />
         <SolidColorBrush x:Key="OverlaySecondaryTextBrush" Color="#FFD8DEE9" />
-        <SolidColorBrush x:Key="OverlayMutedTextBrush" Color="#FFB8C1CC" />
-        <SolidColorBrush x:Key="OverlayWarningBrush" Color="#FFFFD580" />
         <SolidColorBrush x:Key="OverlayErrorBrush" Color="#FFFF8A80" />
         <SolidColorBrush x:Key="OverlayModeBackgroundBrush" Color="#FF394453" />
         <SolidColorBrush x:Key="OverlayHistoryBackgroundBrush" Color="#402F3742" />

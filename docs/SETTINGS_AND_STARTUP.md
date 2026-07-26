@@ -52,7 +52,7 @@ debounce；真正退出前取消待執行 debounce，並以 `FlushAsync` 保存�
 
 ## 啟動順序與 hidden startup
 
-啟動順序為 single-instance ownership、建立 DI、載入/驗證 settings、reconcile
+啟動順序為 single-instance ownership、建立正式 logger、建立 DI、載入/驗證 settings、reconcile
 HKCU Run、套用 requested visibility/interaction 與 sampling interval、建立
 MainWindow HWND、初始化 native styles/tray/hotkeys/sampling、restore/clamp 位置，
 最後才依 requested visibility 與 fullscreen policy 決定是否 Show。
@@ -102,8 +102,12 @@ flush JSON。MainWindow 位置以及 tray/hotkey 引起的 visibility/interactio
 
 App 使用 `OnExplicitShutdown`。tray Exit 先做冪等 BeginExit，擷取最後位置並 flush，
 關閉 Settings Window，再關閉 MainWindow；MainWindow cleanup 解除 hotkeys/message
-hook、dispose tray/animation/metrics/native controllers，最後才呼叫
+hook、dispose tray/animation/metrics/native controllers，接著以最多 2 秒 flush 日誌，最後才呼叫
 `Application.Shutdown()`，DI disposal 作為冪等的最後清理。
+
+Logging policy 不寫入設定檔、不新增 Settings UI，schema version 維持 `1`。Data 與
+Logs 路徑由同一 `ApplicationPaths` 提供；詳細規則見
+[`DIAGNOSTIC_LOGGING.md`](DIAGNOSTIC_LOGGING.md)。
 
 ## 人工驗證
 

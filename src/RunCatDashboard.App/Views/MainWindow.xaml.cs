@@ -3,6 +3,8 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using Microsoft.Win32;
+using Microsoft.Extensions.Logging;
+using RunCatDashboard.App.Diagnostics;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Windowing;
 using RunCatDashboard.App.Settings;
@@ -26,6 +28,8 @@ public partial class MainWindow : Window
     private readonly ISettingsService _settingsService;
     private readonly ISettingsWindowService _settingsWindowService;
     private readonly ExplicitShutdownCoordinator _shutdownCoordinator;
+    private readonly ILogger<MainWindow> _logger;
+    private readonly FaultEpisodeTracker _placementFaultEpisode = new();
     private HwndSource? _windowSource;
     private nint _windowHandle;
     private bool _isHookInstalled;
@@ -49,7 +53,8 @@ public partial class MainWindow : Window
         IOverlayDisplayMonitor displayMonitor,
         ISettingsService settingsService,
         ISettingsWindowService settingsWindowService,
-        ExplicitShutdownCoordinator shutdownCoordinator)
+        ExplicitShutdownCoordinator shutdownCoordinator,
+        ILogger<MainWindow> logger)
     {
         InitializeComponent();
         _viewModel = viewModel;
@@ -65,6 +70,7 @@ public partial class MainWindow : Window
         _settingsService = settingsService;
         _settingsWindowService = settingsWindowService;
         _shutdownCoordinator = shutdownCoordinator;
+        _logger = logger;
         DataContext = viewModel;
 
         Loaded += OnLoaded;
@@ -108,9 +114,16 @@ public partial class MainWindow : Window
         catch (Exception exception) when (
             exception is InvalidOperationException or ArgumentException)
         {
+            LogFailure(
+                "InitializeOverlayWindow",
+                "OverlayWindow",
+                exception,
+                _interactionToggleAction.State.RequestedMode,
+                _interactionToggleAction.State.AppliedMode,
+                _interactionToggleAction.State.IsFaulted);
             _viewModel.ApplyOverlayState(
                 _interactionToggleAction.State,
-                $"Overlay initialization failed: {exception.Message}");
+                "Overlay 初始化失敗，已保留可互動的安全狀態。");
 
         }
 
@@ -174,7 +187,7 @@ public partial class MainWindow : Window
         if (_windowSource is null)
         {
             _viewModel.ReportOverlayError(
-                "Overlay initialization failed: the WPF HWND message source is unavailable.");
+                "Overlay 訊息功能無法初始化，快捷鍵或系統匣功能可能受影響。");
             return false;
         }
 
@@ -186,9 +199,10 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            LogFailure("InstallWindowMessageHook", "WindowMessage", exception);
             _windowSource = null;
             _viewModel.ReportOverlayError(
-                $"Overlay initialization failed while installing the HWND message hook: {exception.Message}");
+                "Overlay 訊息功能無法初始化，快捷鍵或系統匣功能可能受影響。");
             return false;
         }
     }
@@ -206,8 +220,9 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            LogFailure("RemoveWindowMessageHook", "WindowMessage", exception);
             _viewModel.ReportOverlayError(
-                $"Removing the HWND message hook failed: {exception.Message}");
+                "Overlay 結束清理未完整完成，可能需要重新啟動程式。");
         }
 
         _windowSource = null;
@@ -229,10 +244,11 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            LogFailure("HandleWindowMessage", "WindowMessage", exception);
             try
             {
                 _viewModel.ReportOverlayError(
-                    $"Global hotkey handling failed: {exception.Message}");
+                    "快捷鍵或系統匣訊息處理失敗，請稍後重試。");
             }
             catch (Exception)
             {
@@ -344,6 +360,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            LogFailure("HandleDisplaySettingsChanged", "WindowPlacement", exception);
             _displayMonitor.ReportFault(
                 $"Display-settings policy reevaluation failed: {exception.Message}");
         }
@@ -357,6 +374,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            LogFailure("StartFullscreenMonitor", "Fullscreen", exception);
             var faultState = _displayMonitor.State with
             {
                 IsVisible = true,
@@ -374,6 +392,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            LogFailure("ChangeFullscreenPolicy", "Fullscreen", exception);
             _displayMonitor.ReportFault(
                 $"Changing the display policy failed: {exception.Message}");
         }
@@ -396,6 +415,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            LogFailure("ReevaluateOverlayMonitor", "Fullscreen", exception);
             _displayMonitor.ReportFault(
                 $"Overlay-monitor reevaluation failed: {exception.Message}");
         }
@@ -422,6 +442,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            LogFailure("DispatchFullscreenPolicy", "Fullscreen", exception);
             _displayMonitor.ReportFault(
                 $"Dispatching the display policy state failed: {exception.Message}");
         }
@@ -445,6 +466,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            LogFailure("ApplyFullscreenPolicy", "Fullscreen", exception);
             string fault = $"Applying the display policy failed: {exception.Message}";
             _displayMonitor.ReportFault(fault);
             _viewModel.ApplyDisplayPolicyState(state with
@@ -470,8 +492,9 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            LogFailure("DispatchDashboardVisibility", "OverlayVisibility", exception);
             _viewModel.ReportOverlayError(
-                $"Dispatching Dashboard visibility failed: {exception.Message}");
+                "Dashboard 顯示狀態切換失敗，請稍後重試。");
         }
     }
 
@@ -501,8 +524,9 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            LogFailure("ApplyDashboardVisibility", "OverlayVisibility", exception);
             _viewModel.ReportOverlayError(
-                $"Applying Dashboard visibility failed: {exception.Message}");
+                "Dashboard 顯示狀態切換失敗，請稍後重試。");
         }
     }
 
@@ -547,11 +571,13 @@ public partial class MainWindow : Window
                 width,
                 height);
             ApplyWindowBounds(WindowPositionClamp.Clamp(desired, workArea));
+            ReportPlacementRecovery("InitializeWindowPosition");
         }
         catch (Exception exception)
         {
+            ReportPlacementFailure("InitializeWindowPosition", exception);
             _viewModel.ReportOverlayError(
-                $"Overlay position initialization failed: {exception.Message}");
+                "Dashboard 位置初始化失敗，已保留目前位置。");
         }
     }
 
@@ -562,11 +588,13 @@ public partial class MainWindow : Window
             WindowWorkArea workArea = _workAreaProvider.GetForWindow(_windowHandle);
             var current = new WindowBounds(Left, Top, GetWindowWidth(), GetWindowHeight());
             ApplyWindowBounds(WindowPositionClamp.Clamp(current, workArea));
+            ReportPlacementRecovery("ClampWindowPosition");
         }
         catch (Exception exception)
         {
+            ReportPlacementFailure("ClampWindowPosition", exception);
             _viewModel.ReportOverlayError(
-                $"Overlay position recovery failed: {exception.Message}");
+                "Dashboard 位置調整失敗，已保留目前位置。");
         }
     }
 
@@ -599,5 +627,60 @@ public partial class MainWindow : Window
         {
             Window = current.Window with { Left = left, Top = top }
         });
+    }
+
+    private void ReportPlacementFailure(string operation, Exception exception)
+    {
+        if (_placementFaultEpisode.Observe(isFaulted: true) == FaultEpisodeTransition.Failed)
+        {
+            LogFailure(operation, "WindowPlacement", exception);
+        }
+    }
+
+    private void ReportPlacementRecovery(string operation)
+    {
+        if (_placementFaultEpisode.Observe(isFaulted: false) != FaultEpisodeTransition.Recovered)
+        {
+            return;
+        }
+
+        try
+        {
+            _logger.LogInformation(
+                "Window placement recovered. {Operation} {Subsystem} {FaultState}",
+                operation,
+                "WindowPlacement",
+                "Recovered");
+        }
+        catch
+        {
+        }
+    }
+
+    private void LogFailure(
+        string operation,
+        string subsystem,
+        Exception exception,
+        object? requestedState = null,
+        object? appliedState = null,
+        bool isFaulted = true)
+    {
+        try
+        {
+            _logger.LogError(
+                exception,
+                "Window lifecycle operation failed. {Operation} {Subsystem} {RequestedState} {AppliedState} {FaultState} {NativeErrorCode} {HResult}",
+                operation,
+                subsystem,
+                requestedState,
+                appliedState,
+                isFaulted ? "Faulted" : "Recoverable",
+                (exception as Win32Exception)?.NativeErrorCode,
+                exception.HResult);
+        }
+        catch
+        {
+            // Logging must not alter requested/applied/fault state.
+        }
     }
 }

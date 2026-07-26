@@ -58,7 +58,10 @@ internal sealed class FullscreenObservationSource : IFullscreenObservationSource
     {
         if (overlayWindowHandle == nint.Zero)
         {
-            return Fault("The overlay HWND is unavailable.", "Overlay monitor unavailable");
+            return Fault(
+                "The overlay HWND is unavailable.",
+                "Overlay monitor unavailable",
+                "ResolveOverlayWindowHandle");
         }
 
         MonitorSnapshot overlayMonitor;
@@ -70,7 +73,10 @@ internal sealed class FullscreenObservationSource : IFullscreenObservationSource
         {
             return Fault(
                 $"Resolving the overlay monitor failed: {exception.Message}",
-                "Overlay monitor unavailable");
+                "Overlay monitor unavailable",
+                "GetOverlayMonitor",
+                (exception as Win32Exception)?.NativeErrorCode,
+                exception.HResult);
         }
 
         string overlayDiagnostic = $"Overlay monitor {overlayMonitor.Bounds}";
@@ -102,7 +108,9 @@ internal sealed class FullscreenObservationSource : IFullscreenObservationSource
                 string.Create(
                     CultureInfo.InvariantCulture,
                     $"Reading foreground HWND {FormatWindowHandle(foregroundWindow)} class name failed with Win32 error {classNameError}."),
-                overlayDiagnostic);
+                overlayDiagnostic,
+                "GetClassName",
+                classNameError);
         }
 
         if (foregroundClassName is "Progman" or "WorkerW")
@@ -147,7 +155,12 @@ internal sealed class FullscreenObservationSource : IFullscreenObservationSource
                 overlayDiagnostic,
                 string.Create(
                     CultureInfo.InvariantCulture,
-                    $"Fullscreen detection failed: DWM extended frame bounds returned 0x{dwmError:X8}; GetWindowRect failed with Win32 error {windowRectError}."));
+                    $"Fullscreen detection failed: DWM extended frame bounds returned 0x{dwmError:X8}; GetWindowRect failed with Win32 error {windowRectError}."))
+            {
+                FaultOperation = "DwmGetWindowAttribute/GetWindowRect",
+                NativeErrorCode = windowRectError,
+                HResultCode = dwmError
+            };
         }
 
         MonitorSnapshot foregroundMonitor;
@@ -162,7 +175,12 @@ internal sealed class FullscreenObservationSource : IFullscreenObservationSource
                 false,
                 $"Foreground bounds {foregroundBounds} from {boundsSource}",
                 overlayDiagnostic,
-                $"Resolving the foreground monitor failed: {exception.Message}");
+                $"Resolving the foreground monitor failed: {exception.Message}")
+            {
+                FaultOperation = "GetForegroundMonitor",
+                NativeErrorCode = (exception as Win32Exception)?.NativeErrorCode,
+                HResultCode = exception.HResult
+            };
         }
 
         bool fullscreen = FullscreenGeometry.CoversMonitor(
@@ -186,14 +204,24 @@ internal sealed class FullscreenObservationSource : IFullscreenObservationSource
         return new FullscreenObservation(false, false, reason, overlayDiagnostic, null);
     }
 
-    private static FullscreenObservation Fault(string fault, string overlayDiagnostic)
+    private static FullscreenObservation Fault(
+        string fault,
+        string overlayDiagnostic,
+        string operation,
+        int? nativeErrorCode = null,
+        int? hResultCode = null)
     {
         return new FullscreenObservation(
             false,
             false,
             "Foreground not evaluated",
             overlayDiagnostic,
-            fault);
+            fault)
+        {
+            FaultOperation = operation,
+            NativeErrorCode = nativeErrorCode,
+            HResultCode = hResultCode
+        };
     }
 
     private static string FormatWindowHandle(nint windowHandle)

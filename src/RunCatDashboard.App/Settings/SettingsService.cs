@@ -1,3 +1,6 @@
+using Microsoft.Extensions.Logging;
+using RunCatDashboard.App.Diagnostics;
+
 namespace RunCatDashboard.App.Settings;
 
 public interface ISettingsService : IAsyncDisposable
@@ -16,6 +19,8 @@ internal sealed class SettingsService : ISettingsService
     internal static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(500);
     private readonly ISettingsStore _store;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
+    private readonly ILogger<SettingsService> _logger;
+    private readonly FaultEpisodeTracker _writeFaultEpisode = new();
     private readonly object _gate = new();
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private AppSettings _current = AppSettings.Defaults;
@@ -26,11 +31,14 @@ internal sealed class SettingsService : ISettingsService
 
     internal SettingsService(
         ISettingsStore store,
-        Func<TimeSpan, CancellationToken, Task>? delayAsync = null)
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
+        ILogger<SettingsService>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         _store = store;
         _delayAsync = delayAsync ?? Task.Delay;
+        _logger = logger ??
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SettingsService>.Instance;
     }
 
     public AppSettings Current { get { lock (_gate) return _current; } }
@@ -49,6 +57,23 @@ internal sealed class SettingsService : ISettingsService
             _savedRevision = 0;
         }
         SetDiagnostic(result.Diagnostic);
+        if (result.Diagnostic is null)
+        {
+            TryLog(() => _logger.LogInformation(
+                "Settings loaded. {Operation} {Subsystem} {SettingsVersion}",
+                "LoadSettings",
+                "Settings",
+                result.Settings.Version));
+        }
+        else
+        {
+            TryLog(() => _logger.LogWarning(
+                "Settings loaded with fallback diagnostic. {Operation} {Subsystem} {FaultState} {SettingsVersion}",
+                "LoadSettings",
+                "Settings",
+                "Fallback",
+                result.Settings.Version));
+        }
     }
 
     public bool Update(Func<AppSettings, AppSettings> update)
@@ -135,6 +160,15 @@ internal sealed class SettingsService : ISettingsService
                 await _store.SaveAsync(snapshot, cancellationToken).ConfigureAwait(false);
                 lock (_gate) _savedRevision = Math.Max(_savedRevision, revision);
                 SetDiagnostic(null);
+                if (_writeFaultEpisode.Observe(isFaulted: false) == FaultEpisodeTransition.Recovered)
+                {
+                    TryLog(() => _logger.LogInformation(
+                        "Settings persistence recovered. {Operation} {Subsystem} {FaultState} {SettingsVersion}",
+                        "SaveSettings",
+                        "Settings",
+                        "Recovered",
+                        snapshot.Version));
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -142,7 +176,18 @@ internal sealed class SettingsService : ISettingsService
             }
             catch (Exception exception)
             {
-                SetDiagnostic($"保存設定失敗：{exception.Message}");
+                if (_writeFaultEpisode.Observe(isFaulted: true) == FaultEpisodeTransition.Failed)
+                {
+                    TryLog(() => _logger.LogError(
+                        exception,
+                        "Settings persistence failed. {Operation} {Subsystem} {FaultState} {SettingsVersion} {HResult}",
+                        "SaveSettings",
+                        "Settings",
+                        "Faulted",
+                        snapshot.Version,
+                        exception.HResult));
+                }
+                SetDiagnostic("保存設定失敗，將於下次變更或結束程式時重試。");
             }
         }
         finally
@@ -156,5 +201,17 @@ internal sealed class SettingsService : ISettingsService
         if (LastDiagnostic == diagnostic) return;
         LastDiagnostic = diagnostic;
         DiagnosticChanged?.Invoke(diagnostic);
+    }
+
+    private static void TryLog(Action log)
+    {
+        try
+        {
+            log();
+        }
+        catch
+        {
+            // Logging must not alter settings persistence or diagnostic state.
+        }
     }
 }

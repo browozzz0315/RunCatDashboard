@@ -48,6 +48,11 @@ internal sealed class OverlayDisplayPolicyCoordinator
             observation.IsOnOverlayMonitor,
             observation.ForegroundDiagnostic,
             observation.OverlayMonitorDiagnostic,
-            observation.Fault);
+            observation.Fault)
+        {
+            FaultOperation = observation.FaultOperation,
+            NativeErrorCode = observation.NativeErrorCode,
+            HResultCode = observation.HResultCode
+        };
     }
 }

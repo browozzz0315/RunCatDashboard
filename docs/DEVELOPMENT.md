@@ -21,6 +21,13 @@ dotnet test
 dotnet run --project ".\src\RunCatDashboard.App"
 ```
 
+Diagnostic files are written only to `%LocalAppData%\RunCatDashboard\Logs`.
+Use `-- --log-level Trace` for one process, and add
+`--enable-high-frequency-trace` only when polling diagnostics are explicitly
+required. These switches are not persisted. See
+[`DIAGNOSTIC_LOGGING.md`](DIAGNOSTIC_LOGGING.md) for rotation, retention,
+privacy, failure handling, and manual verification.
+
 ## Native Codex session
 
 ```powershell

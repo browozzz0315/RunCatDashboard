@@ -8,4 +8,11 @@ public sealed record OverlayDisplayPolicyState(
     bool IsForegroundOnOverlayMonitor,
     string ForegroundDiagnostic,
     string OverlayMonitorDiagnostic,
-    string? Fault);
+    string? Fault)
+{
+    public string? FaultOperation { get; init; }
+
+    public int? NativeErrorCode { get; init; }
+
+    public int? HResultCode { get; init; }
+}

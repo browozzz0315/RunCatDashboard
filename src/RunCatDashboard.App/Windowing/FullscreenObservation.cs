@@ -7,6 +7,12 @@ public sealed record FullscreenObservation(
     string OverlayMonitorDiagnostic,
     string? Fault)
 {
+    public string? FaultOperation { get; init; }
+
+    public int? NativeErrorCode { get; init; }
+
+    public int? HResultCode { get; init; }
+
     public static FullscreenObservation Pending { get; } = new(
         false,
         false,

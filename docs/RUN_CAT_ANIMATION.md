@@ -67,6 +67,11 @@ interval = 250 ms - (200 ms × cpu / 100)
 - subscriber 或 timer callback exception 不越過 dispatcher callback boundary，錯誤保留在 controller／ViewModel 的診斷狀態。
 - 單 frame controller 不啟動不必要的週期 timer。
 
+日誌只記 animation lifecycle、fault episode 的第一次 failure及 recovery。不得記錄
+每個 frame、CPU average、interval calculation或 tray frame assignment；Overlay也不再
+顯示 `3-sample CPU` 與 `ms/frame` 開發診斷。即使明確啟用 high-frequency Trace，
+animation frame仍不記錄。
+
 Dashboard 與系統匣訂閱同一個 controller 的 `FrameChanged`，因此共用完全相同
 的 frame index，以及由同一組 CPU history、averager 與 mapper 算出的 interval。
 系統匣 presenter 不建立第二個 timer 或第二套 CPU 取樣。

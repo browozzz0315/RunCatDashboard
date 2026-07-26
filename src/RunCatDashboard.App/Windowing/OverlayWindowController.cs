@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Interop;
 
 namespace RunCatDashboard.App.Windowing;
@@ -18,6 +19,7 @@ internal sealed class OverlayWindowController : IOverlayWindowController
         ExtendedWindowStyle.Transparent | ExtendedWindowStyle.NoActivate;
 
     private readonly INativeWindowStyleApi _nativeApi;
+    private readonly ILogger<OverlayWindowController> _logger;
     private nint _windowHandle;
     private bool _isClosed;
     private OverlayInteractionMode _requestedMode = OverlayInteractionMode.ClickThrough;
@@ -25,10 +27,14 @@ internal sealed class OverlayWindowController : IOverlayWindowController
     private bool _isFaulted;
     private string? _lastError;
 
-    internal OverlayWindowController(INativeWindowStyleApi nativeApi)
+    internal OverlayWindowController(
+        INativeWindowStyleApi nativeApi,
+        ILogger<OverlayWindowController>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(nativeApi);
         _nativeApi = nativeApi;
+        _logger = logger ??
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<OverlayWindowController>.Instance;
     }
 
     public OverlayWindowState State => new(
@@ -112,6 +118,7 @@ internal sealed class OverlayWindowController : IOverlayWindowController
         }
         catch (Win32Exception exception)
         {
+            LogNativeFailure(operation, exception, mode, _appliedMode, _isFaulted);
             ThrowOperationFailure(new OverlayWindowException(
                 $"Failed to {operation} because the current native style could not be read. " +
                 DescribeNativeError(exception),
@@ -135,6 +142,7 @@ internal sealed class OverlayWindowController : IOverlayWindowController
         }
         catch (Win32Exception exception)
         {
+            LogNativeFailure(operation, exception, mode, _appliedMode, _isFaulted);
             ThrowOperationFailure(new OverlayWindowException(
                 $"Failed to {operation}; the style update was not confirmed. " +
                 DescribeNativeError(exception),
@@ -148,6 +156,7 @@ internal sealed class OverlayWindowController : IOverlayWindowController
         }
         catch (Win32Exception refreshException)
         {
+            LogNativeFailure(operation, refreshException, mode, _appliedMode, _isFaulted);
             RestorePreviousStyleOrFault(
                 windowHandle,
                 currentStyle,
@@ -174,6 +183,12 @@ internal sealed class OverlayWindowController : IOverlayWindowController
         }
         catch (Win32Exception rollbackException)
         {
+            LogNativeFailure(
+                $"{operation}:RollbackNativeStyle",
+                rollbackException,
+                _requestedMode,
+                null,
+                isFaulted: true);
             var exception = new OverlayWindowException(
                 $"Failed to {operation}, and restoring the previous style also failed. " +
                 "The native window style is unknown. " +
@@ -207,5 +222,31 @@ internal sealed class OverlayWindowController : IOverlayWindowController
     private static string DescribeNativeError(Win32Exception exception)
     {
         return $"Win32 error {exception.NativeErrorCode}: {exception.Message}";
+    }
+
+    private void LogNativeFailure(
+        string operation,
+        Win32Exception exception,
+        OverlayInteractionMode requestedMode,
+        OverlayInteractionMode? appliedMode,
+        bool isFaulted)
+    {
+        try
+        {
+            _logger.LogError(
+                exception,
+                "Overlay native operation failed. {Operation} {Subsystem} {NativeErrorCode} {HResult} {RequestedState} {AppliedState} {FaultState}",
+                operation,
+                "OverlayWindow",
+                exception.NativeErrorCode,
+                exception.HResult,
+                requestedMode,
+                appliedMode,
+                isFaulted ? "Faulted" : "Recoverable");
+        }
+        catch
+        {
+            // Logging must not alter native requested/applied/fault state.
+        }
     }
 }

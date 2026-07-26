@@ -1,6 +1,8 @@
 using System.ComponentModel;
+using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Windowing;
+using RunCatDashboard.Tests.Diagnostics;
 
 namespace RunCatDashboard.Tests.Windowing;
 
@@ -177,6 +179,50 @@ public sealed class OverlayWindowControllerTests
         Assert.False(controller.IsInitialized);
         Assert.Null(controller.State.AppliedMode);
         Assert.NotNull(controller.State.LastError);
+    }
+
+    [Fact]
+    public void Win32Failure_LogsOperationErrorCodeAndRequestedAppliedFaultContext()
+    {
+        var nativeApi = new FakeNativeWindowStyleApi
+        {
+            GetException = new Win32Exception(5, "Access denied")
+        };
+        var logger = new RecordingLogger<OverlayWindowController>();
+        var controller = new OverlayWindowController(nativeApi, logger);
+
+        Assert.Throws<OverlayWindowException>(() => controller.Initialize(WindowHandle));
+
+        RecordedLog entry = Assert.Single(logger.Entries, item => item.Level == LogLevel.Error);
+        Assert.IsType<Win32Exception>(entry.Exception);
+        Assert.Equal(5, Assert.IsType<int>(entry.Properties["NativeErrorCode"]));
+        Assert.Equal(
+            "initialize overlay window styles",
+            Assert.IsType<string>(entry.Properties["Operation"]));
+        Assert.Equal(
+            OverlayInteractionMode.ClickThrough,
+            Assert.IsType<OverlayInteractionMode>(entry.Properties["RequestedState"]));
+        Assert.Null(entry.Properties["AppliedState"]);
+        Assert.Equal("Recoverable", Assert.IsType<string>(entry.Properties["FaultState"]));
+    }
+
+    [Fact]
+    public void LoggingFailure_DoesNotAlterRequestedAppliedOrFaultState()
+    {
+        var nativeApi = new FakeNativeWindowStyleApi();
+        var controller = new OverlayWindowController(
+            nativeApi,
+            new ThrowingLogger<OverlayWindowController>());
+        controller.Initialize(WindowHandle);
+        nativeApi.ResetCounts();
+        nativeApi.SetFailures.Add(1);
+
+        Assert.Throws<OverlayWindowException>(
+            () => controller.SetMode(OverlayInteractionMode.Interactive));
+
+        Assert.Equal(OverlayInteractionMode.Interactive, controller.State.RequestedMode);
+        Assert.Equal(OverlayInteractionMode.ClickThrough, controller.State.AppliedMode);
+        Assert.False(controller.State.IsFaulted);
     }
 
     [Fact]

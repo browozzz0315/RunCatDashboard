@@ -1,4 +1,6 @@
+using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Animation;
+using RunCatDashboard.App.Diagnostics;
 
 namespace RunCatDashboard.App.Windowing;
 
@@ -21,17 +23,22 @@ internal sealed class TrayAnimationCoordinator : ITrayAnimationCoordinator
 {
     private readonly ITrayIconAdapter _adapter;
     private readonly IRunCatAnimationController _animationController;
+    private readonly ILogger<TrayAnimationCoordinator> _logger;
+    private readonly FaultEpisodeTracker _frameFaultEpisode = new();
     private bool _isInitialized;
     private bool _isDisposed;
 
     internal TrayAnimationCoordinator(
         ITrayIconAdapter adapter,
-        IRunCatAnimationController animationController)
+        IRunCatAnimationController animationController,
+        ILogger<TrayAnimationCoordinator>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(adapter);
         ArgumentNullException.ThrowIfNull(animationController);
         _adapter = adapter;
         _animationController = animationController;
+        _logger = logger ??
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<TrayAnimationCoordinator>.Instance;
     }
 
     public bool IsAnimated { get; private set; } = true;
@@ -112,13 +119,13 @@ internal sealed class TrayAnimationCoordinator : ITrayAnimationCoordinator
         try
         {
             _adapter.SetStaticIcon();
-            SetDiagnostic(
-                "載入系統匣動畫圖示失敗，已回退為靜態圖示：" +
-                (_adapter.AnimationIconLoadError ?? "動畫圖示資源無法使用。"));
+            TryLogWarning("LoadTrayAnimationIcons", "StaticFallback");
+            SetDiagnostic("系統匣動畫圖示無法使用，已切換為靜態圖示。");
         }
         catch (Exception exception)
         {
-            SetDiagnostic($"系統匣動畫與靜態 fallback 均無法使用：{exception.Message}");
+            LogException("ApplyTrayStaticFallback", exception);
+            SetDiagnostic("系統匣圖示無法使用，請重新啟動程式後再試。");
         }
     }
 
@@ -127,12 +134,19 @@ internal sealed class TrayAnimationCoordinator : ITrayAnimationCoordinator
         try
         {
             _adapter.SetAnimatedFrame(frameIndex);
+            if (_frameFaultEpisode.Observe(isFaulted: false) == FaultEpisodeTransition.Recovered)
+            {
+                TryLogRecovery("AssignTrayAnimationFrame");
+            }
             SetDiagnostic(null);
         }
         catch (Exception exception)
         {
-            SetDiagnostic(
-                $"更新系統匣動畫第 {frameIndex + 1} 幀失敗，已保留上一個有效圖示：{exception.Message}");
+            if (_frameFaultEpisode.Observe(isFaulted: true) == FaultEpisodeTransition.Failed)
+            {
+                LogException("AssignTrayAnimationFrame", exception);
+            }
+            SetDiagnostic("系統匣動畫暫時無法更新，已保留上一個有效圖示。");
         }
     }
 
@@ -145,7 +159,8 @@ internal sealed class TrayAnimationCoordinator : ITrayAnimationCoordinator
         }
         catch (Exception exception)
         {
-            SetDiagnostic($"切換系統匣靜態圖示失敗，已保留上一個有效圖示：{exception.Message}");
+            LogException("AssignTrayStaticIcon", exception);
+            SetDiagnostic("系統匣圖示暫時無法切換，已保留上一個有效圖示。");
         }
     }
 
@@ -158,5 +173,58 @@ internal sealed class TrayAnimationCoordinator : ITrayAnimationCoordinator
 
         LastError = message;
         DiagnosticChanged?.Invoke(message);
+    }
+
+    private void TryLogWarning(string operation, string appliedState)
+    {
+        try
+        {
+            _logger.LogWarning(
+                "Tray animation resource fallback was applied. {Operation} {Subsystem} {RequestedState} {AppliedState} {FaultState}",
+                operation,
+                "TrayAnimation",
+                "Animated",
+                appliedState,
+                "Faulted");
+        }
+        catch
+        {
+        }
+    }
+
+    private void LogException(string operation, Exception exception)
+    {
+        try
+        {
+            _logger.LogError(
+                exception,
+                "Tray animation operation failed. {Operation} {Subsystem} {RequestedState} {AppliedState} {FaultState} {HResult}",
+                operation,
+                "TrayAnimation",
+                IsAnimated ? "Animated" : "Static",
+                "PreviousIcon",
+                "Faulted",
+                exception.HResult);
+        }
+        catch
+        {
+            // Logging must not alter tray animation state.
+        }
+    }
+
+    private void TryLogRecovery(string operation)
+    {
+        try
+        {
+            _logger.LogInformation(
+                "Tray animation recovered. {Operation} {Subsystem} {FaultState}",
+                operation,
+                "TrayAnimation",
+                "Recovered");
+        }
+        catch
+        {
+            // Logging must not alter tray animation state.
+        }
     }
 }

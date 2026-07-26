@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
+using RunCatDashboard.Tests.Diagnostics;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Windowing;
 
@@ -30,7 +32,7 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("Stopped", viewModel.SamplingStatus);
         Assert.Null(viewModel.ErrorMessage);
         Assert.Equal(OverlayInteractionMode.ClickThrough, viewModel.OverlayMode);
-        Assert.Equal("Click-through (pending)", viewModel.OverlayModeText);
+        Assert.Equal("Interactive", viewModel.OverlayModeText);
         Assert.False(viewModel.HasAppliedOverlayMode);
         Assert.True(viewModel.IsInteractive);
         Assert.False(viewModel.IsOverlayFaulted);
@@ -38,13 +40,11 @@ public sealed class MainWindowViewModelTests
         Assert.Equal(
             OverlayDisplayPolicy.HideOverFullscreenApps,
             viewModel.RequestedDisplayPolicy);
-        Assert.True(viewModel.IsOverlayVisible);
-        Assert.True(viewModel.IsOverlayTopmost);
         Assert.Null(viewModel.DisplayPolicyFault);
     }
 
     [Fact]
-    public async Task DisplayPolicySelectionAndAppliedState_AreKeptSeparate()
+    public async Task DisplayPolicySelection_RemainsUserControllableWithoutRawAppliedDiagnostics()
     {
         await using MainWindowViewModel viewModel = CreateViewModel(
             new SequenceMetricsService(),
@@ -65,10 +65,7 @@ public sealed class MainWindowViewModelTests
 
         Assert.Equal(OverlayDisplayPolicy.NeverTopmost, requested);
         Assert.Equal(OverlayDisplayPolicy.NeverTopmost, viewModel.RequestedDisplayPolicy);
-        Assert.True(viewModel.IsOverlayVisible);
-        Assert.False(viewModel.IsOverlayTopmost);
-        Assert.Equal("Visible / Not topmost", viewModel.AppliedDisplayPolicyText);
-        Assert.Equal("Fullscreen detected on another monitor", viewModel.FullscreenDisplayStatusText);
+        Assert.Null(viewModel.DisplayPolicyFault);
     }
 
     [Fact]
@@ -382,7 +379,7 @@ public sealed class MainWindowViewModelTests
 
         Assert.True(viewModel.IsSampling);
         Assert.Equal("Sampling error; retrying", viewModel.SamplingStatus);
-        Assert.Equal("Sampling failed: native read failed", viewModel.ErrorMessage);
+        Assert.Equal("系統資訊取樣失敗，將自動重試。", viewModel.ErrorMessage);
     }
 
     [Fact]
@@ -402,7 +399,7 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("64.0%", viewModel.CpuUsageText);
         Assert.Equal("50.0%", viewModel.MemoryUsageText);
         Assert.Equal(validSnapshot, Assert.Single(viewModel.CpuHistory));
-        Assert.Equal("Sampling failed: temporary failure", viewModel.ErrorMessage);
+        Assert.Equal("系統資訊取樣失敗，將自動重試。", viewModel.ErrorMessage);
     }
 
     [Fact]
@@ -423,6 +420,48 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("Sampling", viewModel.SamplingStatus);
         Assert.Null(viewModel.ErrorMessage);
         Assert.Equal(recoveredSnapshot, Assert.Single(viewModel.CpuHistory));
+    }
+
+    [Fact]
+    public async Task SamplingFaultEpisode_LogsOnlyFirstFailureAndOneRecovery()
+    {
+        var delay = new ControlledDelay();
+        var logger = new RecordingLogger<MainWindowViewModel>();
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(
+                new InvalidOperationException("first failure"),
+                new InvalidOperationException("repeated failure"),
+                Snapshot(20d)),
+            delay,
+            logger: logger);
+        viewModel.Start();
+
+        await AdvanceToNextSampleAsync(delay);
+        await AdvanceToNextSampleAsync(delay);
+        await delay.WaitUntilDelayStartsAsync();
+
+        Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error);
+        Assert.Single(logger.Entries, entry =>
+            entry.Level == LogLevel.Information &&
+            entry.Properties.TryGetValue("FaultState", out object? faultState) &&
+            Equals(faultState, "Recovered"));
+    }
+
+    [Fact]
+    public async Task SamplingLoggingFailure_DoesNotSuppressExistingFaultState()
+    {
+        var delay = new ControlledDelay();
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(new InvalidOperationException("native read failed")),
+            delay,
+            logger: new ThrowingLogger<MainWindowViewModel>());
+
+        viewModel.Start();
+        await delay.WaitUntilDelayStartsAsync();
+
+        Assert.True(viewModel.IsSampling);
+        Assert.Equal("Sampling error; retrying", viewModel.SamplingStatus);
+        Assert.Equal("系統資訊取樣失敗，將自動重試。", viewModel.ErrorMessage);
     }
 
     [Fact]
@@ -465,9 +504,7 @@ public sealed class MainWindowViewModelTests
         await AdvanceToNextSampleAsync(delay);
         await delay.WaitUntilDelayStartsAsync();
 
-        Assert.Equal("46.7%", viewModel.AnimationAverageCpuText);
         Assert.Equal(TimeSpan.FromMilliseconds(156.66666666666669), animation.Interval);
-        Assert.Equal("157 ms/frame", viewModel.AnimationIntervalText);
     }
 
     [Fact]
@@ -490,7 +527,6 @@ public sealed class MainWindowViewModelTests
         await AdvanceToNextSampleAsync(delay);
         await delay.WaitUntilDelayStartsAsync();
 
-        Assert.Equal("50.0%", viewModel.AnimationAverageCpuText);
         Assert.Equal(TimeSpan.FromMilliseconds(150), animation.Interval);
         Assert.Equal(2, viewModel.CpuHistory.Count);
     }
@@ -509,9 +545,7 @@ public sealed class MainWindowViewModelTests
         await AdvanceToNextSampleAsync(delay);
         await delay.WaitUntilDelayStartsAsync();
 
-        Assert.Equal("--", viewModel.AnimationAverageCpuText);
         Assert.Equal(TimeSpan.FromMilliseconds(250), animation.Interval);
-        Assert.Equal("250 ms/frame", viewModel.AnimationIntervalText);
     }
 
     [Fact]
@@ -548,7 +582,7 @@ public sealed class MainWindowViewModelTests
         await viewModel.DisposeAsync();
         animation.PublishFrame(3);
 
-        Assert.Equal("configured animation failure", viewModel.AnimationErrorMessage);
+        Assert.Equal("Run Cat 動畫暫時發生錯誤。", viewModel.AnimationErrorMessage);
         Assert.Equal(0, viewModel.AnimationFrameIndex);
         Assert.Equal(1, animation.DisposeCount);
     }
@@ -557,7 +591,8 @@ public sealed class MainWindowViewModelTests
         ISystemMetricsService service,
         ControlledDelay delay,
         int cpuHistoryCapacity = 3,
-        FakeAnimationController? animationController = null)
+        FakeAnimationController? animationController = null,
+        ILogger<MainWindowViewModel>? logger = null)
     {
         return new MainWindowViewModel(
             service,
@@ -565,7 +600,8 @@ public sealed class MainWindowViewModelTests
             animationController ?? new FakeAnimationController(),
             cpuHistoryCapacity,
             TimeSpan.FromSeconds(1),
-            delay.DelayAsync);
+            delay.DelayAsync,
+            logger);
     }
 
     private static SystemMetricsSnapshot Snapshot(

@@ -1,9 +1,41 @@
+using RunCatDashboard.Tests.Diagnostics;
+using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Animation;
 
 namespace RunCatDashboard.Tests.Animation;
 
 public sealed class RunCatAnimationControllerTests
 {
+    [Fact]
+    public void AnimationFrames_NeverProducePerFrameLogEvents()
+    {
+        var timer = new FakeAnimationTimer();
+        var logger = new RecordingLogger<RunCatAnimationController>();
+        using var controller = new RunCatAnimationController(timer, logger: logger);
+        controller.Start();
+        int lifecycleLogCount = logger.Entries.Count;
+
+        timer.Fire();
+        timer.Fire();
+        timer.Fire();
+
+        Assert.Equal(lifecycleLogCount, logger.Entries.Count);
+    }
+
+    [Fact]
+    public void LoggingFailure_DoesNotAlterAnimationLifecycleState()
+    {
+        var timer = new FakeAnimationTimer();
+        using var controller = new RunCatAnimationController(
+            timer,
+            logger: new ThrowingLogger<RunCatAnimationController>());
+
+        Assert.True(controller.Start());
+        Assert.True(controller.IsRunning);
+        controller.Stop();
+        Assert.False(controller.IsRunning);
+    }
+
     [Fact]
     public void Constructor_WithEmptyFrameSequence_ThrowsClearError()
     {
@@ -148,17 +180,33 @@ public sealed class RunCatAnimationControllerTests
     public void SubscriberException_IsContainedAndPublishedAsDiagnosticFault()
     {
         var timer = new FakeAnimationTimer();
-        using var controller = new RunCatAnimationController(timer);
+        var logger = new RecordingLogger<RunCatAnimationController>();
+        using var controller = new RunCatAnimationController(timer, logger: logger);
         string? diagnostic = null;
-        controller.FrameChanged += _ => throw new InvalidOperationException("configured subscriber failure");
+        bool shouldFail = true;
+        controller.FrameChanged += _ =>
+        {
+            if (shouldFail)
+            {
+                throw new InvalidOperationException("configured subscriber failure");
+            }
+        };
         controller.Faulted += message => diagnostic = message;
         controller.Start();
 
         Exception? exception = Record.Exception(timer.Fire);
+        timer.Fire();
+        shouldFail = false;
+        timer.Fire();
 
         Assert.Null(exception);
         Assert.Contains("configured subscriber failure", controller.LastFault);
         Assert.Equal(controller.LastFault, diagnostic);
+        Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error);
+        Assert.Single(logger.Entries, entry =>
+            entry.Level == LogLevel.Information &&
+            entry.Properties.TryGetValue("FaultState", out object? state) &&
+            Equals(state, "Recovered"));
     }
 
     [Fact]
