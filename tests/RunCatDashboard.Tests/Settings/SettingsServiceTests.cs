@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using RunCatDashboard.App.Settings;
+using RunCatDashboard.App.Windowing;
 
 namespace RunCatDashboard.Tests.Settings;
 
@@ -35,6 +36,30 @@ public sealed class SettingsServiceTests
         await service.FlushAsync();
 
         Assert.False(Assert.Single(store.Saves).Window.IsDashboardVisible);
+    }
+
+    [Fact]
+    public async Task LaterSettingsUpdate_PreservesSavedInteractionHotKey()
+    {
+        var store = new RecordingStore();
+        await using var service = new SettingsService(store);
+        await service.LoadAsync();
+        var gesture = new OverlayHotKeyGesture(
+            true, false, true, true, OverlayHotKeyKey.F10);
+        service.Update(settings => settings with
+        {
+            Overlay = settings.Overlay with { InteractionHotKey = gesture }
+        });
+        await service.FlushAsync();
+
+        service.Update(settings => settings with
+        {
+            Metrics = new MetricsSettings(500)
+        });
+        await service.FlushAsync();
+
+        Assert.Equal(gesture, service.Current.Overlay.InteractionHotKey);
+        Assert.Equal(gesture, store.Saves.Last().Overlay.InteractionHotKey);
     }
 
     [Fact]

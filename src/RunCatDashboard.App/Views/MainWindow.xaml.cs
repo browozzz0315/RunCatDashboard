@@ -104,6 +104,7 @@ public partial class MainWindow : Window
             IReadOnlyList<GlobalHotKeyRegistrationState> registrations =
                 _globalHotKeyController.RegisterAll(_windowHandle);
             _viewModel.ApplyHotKeyRegistrations(registrations);
+            ReconcileInteractionHotKeyStartupState(registrations);
         }
 
         try
@@ -131,6 +132,37 @@ public partial class MainWindow : Window
         _viewModel.ReportTrayError(_trayService.LastError);
         RegisterDisplaySettingsHandler();
         RestoreOrInitializePosition();
+    }
+
+    private void ReconcileInteractionHotKeyStartupState(
+        IReadOnlyList<GlobalHotKeyRegistrationState> registrations)
+    {
+        GlobalHotKeyRegistrationState interaction = registrations.Single(state =>
+            state.Action == GlobalHotKeyAction.ToggleInteractionMode);
+        OverlayHotKeyGesture effectiveGesture =
+            _globalHotKeyController.InteractionGesture;
+        if (interaction.IsRegistered &&
+            _settingsService.Current.Overlay.InteractionHotKey != effectiveGesture)
+        {
+            _settingsService.Update(current => current with
+            {
+                Overlay = current.Overlay with
+                {
+                    InteractionHotKey = effectiveGesture
+                }
+            });
+        }
+
+        if (interaction.IsRegistered)
+        {
+            return;
+        }
+
+        _visibilityCoordinator.SetUserRequestedVisibility(true);
+        _interactionToggleAction.RequestMode(OverlayInteractionMode.Interactive);
+        _viewModel.ReportOverlayError(
+            "Overlay 模式快捷鍵無法使用；Dashboard 已保持顯示及 Interactive，" +
+            "仍可由系統匣控制。");
     }
 
     protected override void OnClosed(EventArgs e)
@@ -314,7 +346,10 @@ public partial class MainWindow : Window
         _viewModel.ApplyOverlayState(state);
         _settingsService.Update(current => current with
         {
-            Overlay = new OverlaySettings(state.RequestedMode)
+            Overlay = current.Overlay with
+            {
+                InteractionMode = state.RequestedMode
+            }
         });
     }
 

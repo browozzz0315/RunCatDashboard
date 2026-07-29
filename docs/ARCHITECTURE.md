@@ -1,4 +1,4 @@
-﻿# Architecture
+# Architecture
 
 ## Decision
 
@@ -64,6 +64,13 @@ The system tray is implemented by an infrastructure-owned
 message handling enters the ViewModel. The shared Window message hook dispatches
 both registered hotkeys and the Windows `TaskbarCreated` message. Win32
 declarations remain under `Interop`.
+
+The Overlay interaction-mode hotkey is a validated structured settings value.
+The Windows-specific `GlobalHotKeyController` alone converts that value to
+native modifiers and virtual keys, and owns runtime replacement, rollback, and
+startup fallback. The Settings ViewModel edits only a draft model and never
+accesses HWND, `HwndSource`, or `RegisterHotKey`. The Dashboard visibility
+hotkey remains fixed and outside Settings.
 
 `TrayAnimationCoordinator` is the tray-specific presenter. It subscribes to the
 same `IRunCatAnimationController.FrameChanged` event used by the Dashboard and

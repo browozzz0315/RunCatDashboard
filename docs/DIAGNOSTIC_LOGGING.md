@@ -65,6 +65,11 @@ animation interval calculation、fullscreen polling、tray frame assignment、
 Fullscreen、sampling 及會持續重試的 subsystem 使用 episode tracking；相同 fault
 持續存在時不重複寫入。Logging failure 不得改變既有 requested／applied／fault state。
 
+Global hotkey 記錄首次 registration failure、runtime replacement rollback failure、
+startup fallback 與 fault recovery；相同持續 fault 仍依 episode 節流。不得記錄每次
+正常 `WM_HOTKEY` 或按鍵事件。使用者介面只顯示可處理的中文訊息，native error code
+與 HRESULT 僅進 structured log。
+
 ## Startup、fallback 與 shutdown
 
 File logger 建立失敗時改用 `NullLoggerFactory`，App 核心功能盡可能繼續。失敗只經
