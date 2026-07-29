@@ -51,6 +51,7 @@ internal sealed class JsonSettingsStore : ISettingsStore
     static JsonSettingsStore()
     {
         SerializerOptions.Converters.Add(new LenientInteractionModeConverter());
+        SerializerOptions.Converters.Add(new LenientOverlayHotKeyKeyConverter());
     }
 
     private readonly string _directory;
@@ -88,7 +89,7 @@ internal sealed class JsonSettingsStore : ISettingsStore
                 element.TryGetInt32(out int parsedVersion)
                     ? parsedVersion
                     : 0;
-            if (version != AppSettings.CurrentVersion)
+            if (version is not 1 && version != AppSettings.CurrentVersion)
             {
                 string backup = BackupInvalidFile($"unsupported-v{version}");
                 return new SettingsLoadResult(
@@ -251,6 +252,35 @@ internal sealed class JsonSettingsStore : ISettingsStore
         public override void Write(
             Utf8JsonWriter writer,
             OverlayInteractionMode value,
+            JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
+    }
+
+    private sealed class LenientOverlayHotKeyKeyConverter : JsonConverter<OverlayHotKeyKey>
+    {
+        public override OverlayHotKeyKey Read(
+            ref Utf8JsonReader reader,
+            Type typeToConvert,
+            JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String &&
+                Enum.TryParse(reader.GetString(), ignoreCase: true, out OverlayHotKeyKey key))
+            {
+                return key;
+            }
+            if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out int numeric))
+            {
+                return (OverlayHotKeyKey)numeric;
+            }
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                return (OverlayHotKeyKey)(-1);
+            }
+            throw new JsonException("interactionHotKey.key must be a string or integer.");
+        }
+
+        public override void Write(
+            Utf8JsonWriter writer,
+            OverlayHotKeyKey value,
             JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
     }
 }

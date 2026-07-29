@@ -258,7 +258,9 @@ public partial class App : System.Windows.Application
         services.AddSingleton<IGlobalHotKeyController>(provider =>
             new GlobalHotKeyController(
                 new Win32GlobalHotKeyApi(),
-                provider.GetRequiredService<ILogger<GlobalHotKeyController>>()));
+                provider.GetRequiredService<ILogger<GlobalHotKeyController>>(),
+                provider.GetRequiredService<ISettingsService>()
+                    .Current.Overlay.InteractionHotKey));
         services.AddSingleton<IOverlayHotKeyMessageHandler>(provider =>
             new OverlayHotKeyMessageHandler(
                 provider.GetRequiredService<IGlobalHotKeyController>(),
@@ -297,6 +299,7 @@ public partial class App : System.Windows.Application
                 provider.GetRequiredService<ISettingsService>(),
                 provider.GetRequiredService<IWindowVisibilityCoordinator>(),
                 provider.GetRequiredService<IInteractionModeToggleAction>(),
+                provider.GetRequiredService<IGlobalHotKeyController>(),
                 provider.GetRequiredService<MainWindowViewModel>(),
                 provider.GetRequiredService<IRunAtLoginService>()));
         services.AddTransient<SettingsWindowViewModel>();

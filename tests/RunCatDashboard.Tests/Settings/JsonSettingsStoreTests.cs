@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.IO;
+using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Settings;
 using RunCatDashboard.App.Windowing;
 
@@ -22,12 +23,14 @@ public sealed class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task SchemaV1_RoundTripsAllContractFields()
+    public async Task SchemaV2_RoundTripsAllContractFields()
     {
         var expected = new AppSettings(
-            1,
+            2,
             new WindowSettings(-420.5, 18.25, false),
-            new OverlaySettings(OverlayInteractionMode.Interactive),
+            new OverlaySettings(
+                OverlayInteractionMode.Interactive,
+                new OverlayHotKeyGesture(true, false, true, true, OverlayHotKeyKey.F12)),
             new MetricsSettings(5000),
             new StartupSettings(true));
         var store = CreateStore();
@@ -37,9 +40,114 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         Assert.Equal(expected, result.Settings);
         string json = await File.ReadAllTextAsync(Path.Combine(_directory, "settings.json"));
-        Assert.Contains("\"version\": 1", json);
+        Assert.Contains("\"version\": 2", json);
+        Assert.Contains("\"interactionHotKey\"", json);
+        Assert.Contains("\"key\": \"F12\"", json);
         Assert.DoesNotContain("width", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("fullscreen", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SchemaV1_MigratesWithoutLosingExistingValuesAndUsesDefaultHotKey()
+    {
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(Path.Combine(_directory, "settings.json"), """
+            {
+              "version": 1,
+              "window": { "left": -420.5, "top": 18.25, "isDashboardVisible": false },
+              "overlay": { "interactionMode": "Interactive" },
+              "metrics": { "samplingIntervalMilliseconds": 5000 },
+              "startup": { "runAtLoginRequested": true }
+            }
+            """);
+
+        SettingsLoadResult result = await CreateStore().LoadAsync();
+
+        Assert.Equal(2, result.Settings.Version);
+        Assert.Equal(new WindowSettings(-420.5, 18.25, false), result.Settings.Window);
+        Assert.Equal(OverlayInteractionMode.Interactive, result.Settings.Overlay.InteractionMode);
+        Assert.Equal(OverlayHotKeyGesture.Default, result.Settings.Overlay.InteractionHotKey);
+        Assert.Equal(5000, result.Settings.Metrics.SamplingIntervalMilliseconds);
+        Assert.True(result.Settings.Startup.RunAtLoginRequested);
+        Assert.Null(result.Diagnostic);
+    }
+
+    [Fact]
+    public async Task SchemaV2_ColdStartRegistersPersistedHotKeyInsteadOfDefault()
+    {
+        var persisted = new OverlayHotKeyGesture(
+            false, true, true, true, OverlayHotKeyKey.F8);
+        await CreateStore().SaveAsync(AppSettings.Defaults with
+        {
+            Overlay = AppSettings.Defaults.Overlay with
+            {
+                InteractionHotKey = persisted
+            }
+        });
+        SettingsLoadResult loaded = await CreateStore().LoadAsync();
+        var native = new RecordingGlobalHotKeyApi();
+        using var controller = new GlobalHotKeyController(
+            native,
+            initialInteractionGesture: loaded.Settings.Overlay.InteractionHotKey);
+
+        controller.RegisterAll(new nint(1234));
+
+        Assert.Contains(native.Registrations, registration =>
+            registration.Identifier == GlobalHotKeyController.InteractionHotKeyIdentifier &&
+            registration.VirtualKey == (uint)persisted.Key);
+        Assert.DoesNotContain(native.Registrations, registration =>
+            registration.Identifier == GlobalHotKeyController.InteractionHotKeyIdentifier &&
+            registration.VirtualKey == (uint)OverlayHotKeyGesture.Default.Key);
+    }
+
+    [Fact]
+    public void Normalize_PreservesValidCustomHotKey()
+    {
+        var gesture = new OverlayHotKeyGesture(
+            true, false, true, true, OverlayHotKeyKey.D7);
+        AppSettings settings = AppSettings.Defaults with
+        {
+            Overlay = AppSettings.Defaults.Overlay with
+            {
+                InteractionHotKey = gesture
+            }
+        };
+
+        AppSettings normalized = AppSettingsValidator.Normalize(settings);
+
+        Assert.Equal(gesture, normalized.Overlay.InteractionHotKey);
+    }
+
+    [Fact]
+    public async Task InvalidSavedHotKey_UsesDefaultWithoutDiscardingOtherSettings()
+    {
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(Path.Combine(_directory, "settings.json"), """
+            {
+              "version": 2,
+              "window": { "isDashboardVisible": false },
+              "overlay": {
+                "interactionMode": "Interactive",
+                "interactionHotKey": {
+                  "control": false,
+                  "alt": false,
+                  "shift": false,
+                  "windows": false,
+                  "key": "A"
+                }
+              },
+              "metrics": { "samplingIntervalMilliseconds": 500 },
+              "startup": { "runAtLoginRequested": true }
+            }
+            """);
+
+        SettingsLoadResult result = await CreateStore().LoadAsync();
+
+        Assert.Equal(OverlayHotKeyGesture.Default, result.Settings.Overlay.InteractionHotKey);
+        Assert.False(result.Settings.Window.IsDashboardVisible);
+        Assert.Equal(OverlayInteractionMode.Interactive, result.Settings.Overlay.InteractionMode);
+        Assert.Equal(500, result.Settings.Metrics.SamplingIntervalMilliseconds);
+        Assert.True(result.Settings.Startup.RunAtLoginRequested);
     }
 
     [Fact]
@@ -137,6 +245,18 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
     private JsonSettingsStore CreateStore() =>
         new(_directory, new PhysicalSettingsFileSystem());
+
+    private sealed class RecordingGlobalHotKeyApi : INativeGlobalHotKeyApi
+    {
+        internal List<(int Identifier, uint Modifiers, uint VirtualKey)> Registrations { get; } = [];
+
+        public void Register(nint windowHandle, int identifier, uint modifiers, uint virtualKey) =>
+            Registrations.Add((identifier, modifiers, virtualKey));
+
+        public void Unregister(nint windowHandle, int identifier)
+        {
+        }
+    }
 
     private sealed class ReplaceFailingFileSystem : ISettingsFileSystem
     {

@@ -27,6 +27,10 @@ public static class AppSettingsValidator
             Enum.IsDefined(settings.Overlay.InteractionMode)
                 ? settings.Overlay.InteractionMode
                 : defaults.Overlay.InteractionMode;
+        OverlayHotKeyGesture hotKey = settings.Overlay?.InteractionHotKey is { } candidate &&
+            candidate.TryValidate(out _)
+                ? candidate
+                : OverlayHotKeyGesture.Default;
         int interval = settings.Metrics is not null &&
             AllowedSamplingIntervals.Contains(settings.Metrics.SamplingIntervalMilliseconds)
                 ? settings.Metrics.SamplingIntervalMilliseconds
@@ -35,7 +39,7 @@ public static class AppSettingsValidator
         return new AppSettings(
             AppSettings.CurrentVersion,
             new WindowSettings(left, top, settings.Window?.IsDashboardVisible ?? true),
-            new OverlaySettings(mode),
+            new OverlaySettings(mode, hotKey),
             new MetricsSettings(interval),
             new StartupSettings(settings.Startup?.RunAtLoginRequested ?? false));
     }

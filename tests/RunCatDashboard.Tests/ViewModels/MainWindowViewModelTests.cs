@@ -141,6 +141,27 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task ReplacingInteractionHotKey_DoesNotChangeSamplingLifecycle()
+    {
+        var service = new SequenceMetricsService(Snapshot(10d));
+        var delay = new ControlledDelay();
+        var hotKeyController = new GlobalHotKeyController(new NoOpNativeGlobalHotKeyApi());
+        hotKeyController.RegisterAll(new nint(1234));
+        await using MainWindowViewModel viewModel = CreateViewModel(service, delay);
+        viewModel.Start();
+        await delay.WaitUntilDelayStartsAsync();
+
+        GlobalHotKeyApplyResult result = hotKeyController.ApplyInteractionGesture(
+            new OverlayHotKeyGesture(true, false, true, false, OverlayHotKeyKey.F12));
+
+        Assert.True(result.IsSuccess);
+        Assert.True(viewModel.IsSampling);
+        Assert.Equal("Sampling", viewModel.SamplingStatus);
+        Assert.Equal(1, service.SampleCount);
+        Assert.Empty(delay.RequestedDelays.Skip(1));
+    }
+
+    [Fact]
     public async Task FirstSample_WithNullCpu_ShowsWaitingStateAndDoesNotAddHistory()
     {
         var service = new SequenceMetricsService(
