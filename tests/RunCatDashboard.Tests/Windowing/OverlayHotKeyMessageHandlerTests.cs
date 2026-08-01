@@ -48,6 +48,26 @@ public sealed class OverlayHotKeyMessageHandlerTests
         Assert.True(visibility.State.IsUserRequestedVisible);
     }
 
+    [Fact]
+    public void VisibilityHotKey_WhenDashboardIsHidden_RestoresRequestedVisibility()
+    {
+        var hotKeys = new GlobalHotKeyController(new SuccessfulNativeHotKeyApi());
+        hotKeys.RegisterAll(new nint(1234));
+        var visibility = new WindowVisibilityCoordinator();
+        visibility.SetUserRequestedVisibility(false);
+        var handler = new OverlayHotKeyMessageHandler(
+            hotKeys,
+            new FakeInteractionModeToggleAction(),
+            visibility);
+
+        bool handled = handler.TryHandleMessage(
+            GlobalHotKeyController.WindowMessageHotKey,
+            new nint(GlobalHotKeyController.VisibilityHotKeyIdentifier));
+
+        Assert.True(handled);
+        Assert.True(visibility.State.IsUserRequestedVisible);
+    }
+
     private sealed class SuccessfulNativeHotKeyApi : INativeGlobalHotKeyApi
     {
         public void Register(nint windowHandle, int identifier, uint modifiers, uint virtualKey) { }

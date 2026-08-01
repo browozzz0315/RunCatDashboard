@@ -105,6 +105,7 @@ public partial class MainWindow : Window
                 _globalHotKeyController.RegisterAll(_windowHandle);
             _viewModel.ApplyHotKeyRegistrations(registrations);
             ReconcileInteractionHotKeyStartupState(registrations);
+            ReconcileVisibilityHotKeyStartupState(registrations);
         }
 
         try
@@ -163,6 +164,32 @@ public partial class MainWindow : Window
         _viewModel.ReportOverlayError(
             "Overlay 模式快捷鍵無法使用；Dashboard 已保持顯示及 Interactive，" +
             "仍可由系統匣控制。");
+    }
+
+    private void ReconcileVisibilityHotKeyStartupState(
+        IReadOnlyList<GlobalHotKeyRegistrationState> registrations)
+    {
+        GlobalHotKeyRegistrationState visibility = registrations.Single(state =>
+            state.Action == GlobalHotKeyAction.ToggleDashboardVisibility);
+        OverlayHotKeyGesture effectiveGesture =
+            _globalHotKeyController.VisibilityGesture;
+        if (visibility.IsRegistered &&
+            _settingsService.Current.Window.VisibilityHotKey != effectiveGesture)
+        {
+            _settingsService.Update(current => current with
+            {
+                Window = current.Window with
+                {
+                    VisibilityHotKey = effectiveGesture
+                }
+            });
+        }
+
+        if (!visibility.IsRegistered)
+        {
+            _viewModel.ReportOverlayError(
+                "Dashboard 顯示／隱藏快捷鍵無法使用；仍可由系統匣控制。");
+        }
     }
 
     protected override void OnClosed(EventArgs e)

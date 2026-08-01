@@ -1,7 +1,7 @@
 <Window x:Class="RunCatDashboard.App.Views.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="RunCatDashboard 設定" Width="500" Height="720"
+        Title="RunCatDashboard 設定" Width="500" Height="820"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         PreviewMouseDown="OnWindowPreviewMouseDown"
         Deactivated="OnWindowDeactivated"
@@ -90,6 +90,66 @@
                     </TextBlock>
                     <TextBlock Text="{Binding HotKeyWarning}"
                                Foreground="DarkOrange" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding InteractionHotKeyError}"
+                               Foreground="DarkRed" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    <TextBlock Text="至少選擇一個 modifier；系統保留快捷鍵不可使用。"
+                               Foreground="DimGray" TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="Dashboard 顯示／隱藏快捷鍵" Padding="12" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="在 Dashboard 顯示或隱藏時切換可見狀態；這組快捷鍵不會切換 Overlay 互動模式。"
+                               TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <WrapPanel Margin="0,0,0,10">
+                        <CheckBox Content="Ctrl"
+                                  IsChecked="{Binding VisibilityHotKeyControl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  Margin="0,0,16,0" />
+                        <CheckBox Content="Alt"
+                                  IsChecked="{Binding VisibilityHotKeyAlt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  Margin="0,0,16,0" />
+                        <CheckBox Content="Shift"
+                                  IsChecked="{Binding VisibilityHotKeyShift, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  Margin="0,0,16,0" />
+                        <CheckBox Content="Windows"
+                                  IsChecked="{Binding VisibilityHotKeyWindows, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    </WrapPanel>
+                    <TextBlock Text="主要按鍵" Margin="0,0,0,4" />
+                    <TextBox x:Name="VisibilityHotKeyCaptureField"
+                             Text="{Binding VisibilityHotKeyKeyDisplayText, Mode=OneWay}"
+                             IsReadOnly="True" Focusable="True"
+                             PreviewMouseLeftButtonDown="OnHotKeyCapturePreviewMouseLeftButtonDown"
+                             GotKeyboardFocus="OnHotKeyCaptureGotKeyboardFocus"
+                             PreviewKeyDown="OnHotKeyCapturePreviewKeyDown"
+                             ToolTip="點選後按下 A-Z、0-9 或 F1-F12；Esc 取消。"
+                             Padding="6,4">
+                        <TextBox.Style>
+                            <Style TargetType="TextBox">
+                                <Setter Property="BorderBrush" Value="Gray" />
+                                <Setter Property="BorderThickness" Value="1" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsVisibilityHotKeyCaptureActive}" Value="True">
+                                        <Setter Property="BorderBrush" Value="DodgerBlue" />
+                                        <Setter Property="BorderThickness" Value="3" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBox.Style>
+                    </TextBox>
+                    <TextBlock Text="請按下 A-Z、0-9 或 F1-F12；Esc 取消"
+                               Visibility="{Binding IsVisibilityHotKeyCaptureActive, Converter={StaticResource BooleanToVisibilityConverter}}"
+                               Foreground="DodgerBlue" FontWeight="SemiBold"
+                               TextWrapping="Wrap" Margin="0,6,0,0" />
+                    <TextBlock Text="{Binding VisibilityHotKeyCaptureMessage}"
+                               Foreground="DarkRed" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    <TextBlock Margin="0,8,0,0">
+                        <Run Text="目前組合：" />
+                        <Run Text="{Binding VisibilityHotKeyDisplayText, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock Text="{Binding VisibilityHotKeyWarning}"
+                               Foreground="DarkOrange" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    <TextBlock Text="{Binding VisibilityHotKeyError}"
+                               Foreground="DarkRed" TextWrapping="Wrap" Margin="0,4,0,0" />
                     <TextBlock Text="至少選擇一個 modifier；系統保留快捷鍵不可使用。"
                                Foreground="DimGray" TextWrapping="Wrap" Margin="0,4,0,0" />
                 </StackPanel>

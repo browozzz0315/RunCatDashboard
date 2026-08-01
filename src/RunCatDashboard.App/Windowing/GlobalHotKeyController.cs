@@ -27,7 +27,8 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
     private readonly ILogger<GlobalHotKeyController> _logger;
     private readonly Registration _interactionRegistration;
     private readonly Registration _visibilityRegistration;
-    private readonly bool _initialGestureWasInvalid;
+    private readonly bool _initialInteractionGestureWasInvalid;
+    private readonly bool _initialVisibilityGestureWasInvalid;
     private nint _windowHandle;
     private bool _registrationAttempted;
     private bool _isDisposed;
@@ -35,28 +36,47 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
     internal GlobalHotKeyController(
         INativeGlobalHotKeyApi nativeApi,
         ILogger<GlobalHotKeyController>? logger = null,
-        OverlayHotKeyGesture? initialInteractionGesture = null)
+        OverlayHotKeyGesture? initialInteractionGesture = null,
+        OverlayHotKeyGesture? initialVisibilityGesture = null)
     {
         ArgumentNullException.ThrowIfNull(nativeApi);
         _nativeApi = nativeApi;
         _logger = logger ??
             Microsoft.Extensions.Logging.Abstractions.NullLogger<GlobalHotKeyController>.Instance;
 
-        OverlayHotKeyGesture requested = initialInteractionGesture ?? OverlayHotKeyGesture.Default;
-        _initialGestureWasInvalid = !requested.TryValidate(out _);
-        if (_initialGestureWasInvalid)
+        OverlayHotKeyGesture requestedInteraction =
+            initialInteractionGesture ?? OverlayHotKeyGesture.Default;
+        _initialInteractionGestureWasInvalid = !requestedInteraction.TryValidate(out _);
+        if (_initialInteractionGestureWasInvalid)
         {
-            requested = OverlayHotKeyGesture.Default;
+            requestedInteraction = OverlayHotKeyGesture.Default;
+        }
+
+        OverlayHotKeyGesture requestedVisibility =
+            initialVisibilityGesture ?? OverlayHotKeyGesture.DashboardVisibilityDefault;
+        _initialVisibilityGestureWasInvalid = !requestedVisibility.TryValidate(out _);
+        if (_initialVisibilityGestureWasInvalid)
+        {
+            requestedVisibility = OverlayHotKeyGesture.DashboardVisibilityDefault;
+        }
+
+        if (requestedInteraction == requestedVisibility)
+        {
+            requestedVisibility = OverlayHotKeyGesture.DashboardVisibilityDefault;
+            if (requestedInteraction == requestedVisibility)
+            {
+                requestedInteraction = OverlayHotKeyGesture.Default;
+            }
         }
 
         _interactionRegistration = new Registration(
             GlobalHotKeyAction.ToggleInteractionMode,
             InteractionHotKeyIdentifier,
-            requested);
+            requestedInteraction);
         _visibilityRegistration = new Registration(
             GlobalHotKeyAction.ToggleDashboardVisibility,
             VisibilityHotKeyIdentifier,
-            new OverlayHotKeyGesture(true, true, true, false, OverlayHotKeyKey.D));
+            requestedVisibility);
     }
 
     public IReadOnlyList<GlobalHotKeyRegistrationState> Registrations
@@ -81,6 +101,17 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
         }
     }
 
+    public OverlayHotKeyGesture VisibilityGesture
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _visibilityRegistration.Gesture;
+            }
+        }
+    }
+
     public IReadOnlyList<GlobalHotKeyRegistrationState> RegisterAll(nint windowHandle)
     {
         if (windowHandle == nint.Zero)
@@ -100,13 +131,30 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
 
             _registrationAttempted = true;
             _windowHandle = windowHandle;
-            TryRegisterLocked(_visibilityRegistration, "RegisterHotKey");
-            RegisterInitialInteractionGestureLocked();
+            RegisterInitialGestureLocked(
+                _visibilityRegistration,
+                _interactionRegistration,
+                OverlayHotKeyGesture.DashboardVisibilityDefault,
+                _initialVisibilityGestureWasInvalid);
+            RegisterInitialGestureLocked(
+                _interactionRegistration,
+                _visibilityRegistration,
+                OverlayHotKeyGesture.Default,
+                _initialInteractionGestureWasInvalid);
             return SnapshotLocked();
         }
     }
 
     public GlobalHotKeyApplyResult ApplyInteractionGesture(OverlayHotKeyGesture gesture)
+        => ApplyGesture(_interactionRegistration, _visibilityRegistration, gesture);
+
+    public GlobalHotKeyApplyResult ApplyVisibilityGesture(OverlayHotKeyGesture gesture)
+        => ApplyGesture(_visibilityRegistration, _interactionRegistration, gesture);
+
+    private GlobalHotKeyApplyResult ApplyGesture(
+        Registration registration,
+        Registration otherRegistration,
+        OverlayHotKeyGesture gesture)
     {
         ArgumentNullException.ThrowIfNull(gesture);
         if (!gesture.TryValidate(out string? validationError))
@@ -122,7 +170,16 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
                 throw new InvalidOperationException("Global hotkeys have not been initialized.");
             }
 
-            Registration registration = _interactionRegistration;
+            if (otherRegistration.Gesture == gesture)
+            {
+                return new GlobalHotKeyApplyResult(
+                    false,
+                    false,
+                    true,
+                    false,
+                    OverlayHotKeyGesture.DuplicateGestureMessage);
+            }
+
             if (registration.Gesture == gesture && registration.IsRegistered)
             {
                 return new GlobalHotKeyApplyResult(true, true, true, false, null);
@@ -156,7 +213,7 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
             registration.Gesture = gesture;
             if (TryRegisterLocked(registration, "ReplaceHotKey"))
             {
-                LogReplacementSuccess(previous, gesture);
+                LogReplacementSuccess(registration, previous, gesture);
                 return new GlobalHotKeyApplyResult(true, false, true, false, null);
             }
 
@@ -227,32 +284,36 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
         }
     }
 
-    private void RegisterInitialInteractionGestureLocked()
+    private void RegisterInitialGestureLocked(
+        Registration registration,
+        Registration otherRegistration,
+        OverlayHotKeyGesture fallback,
+        bool initialGestureWasInvalid)
     {
-        Registration registration = _interactionRegistration;
         OverlayHotKeyGesture requested = registration.Gesture;
-        if (_initialGestureWasInvalid)
+        if (initialGestureWasInvalid)
         {
-            LogStartupFallback(requested, "InvalidSavedGesture");
+            LogStartupFallback(registration, requested, fallback, "InvalidSavedGesture");
         }
 
-        if (TryRegisterLocked(registration, "RegisterHotKey"))
-        {
-            return;
-        }
-
-        if (requested == OverlayHotKeyGesture.Default)
+        if (registration.Gesture != otherRegistration.Gesture &&
+            TryRegisterLocked(registration, "RegisterHotKey"))
         {
             return;
         }
 
-        LogStartupFallback(requested, "RegistrationFailed");
-        registration.Gesture = OverlayHotKeyGesture.Default;
+        if (requested == fallback || fallback == otherRegistration.Gesture)
+        {
+            return;
+        }
+
+        LogStartupFallback(registration, requested, fallback, "RegistrationFailed");
+        registration.Gesture = fallback;
         if (TryRegisterLocked(registration, "StartupFallbackHotKey"))
         {
             registration.Fault =
                 $"已保存的快捷鍵 {requested.DisplayText} 無法使用，" +
-                $"目前改用預設 {OverlayHotKeyGesture.Default.DisplayText}。";
+                $"目前改用預設 {fallback.DisplayText}。";
         }
     }
 
@@ -377,19 +438,24 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
             "Recovered"));
     }
 
-    private void LogStartupFallback(OverlayHotKeyGesture requested, string reason)
+    private void LogStartupFallback(
+        Registration registration,
+        OverlayHotKeyGesture requested,
+        OverlayHotKeyGesture fallback,
+        string reason)
     {
         TryLog(() => _logger.LogWarning(
             "Global hotkey startup fallback requested. {Operation} {Subsystem} {HotKeyId} {RequestedState} {AppliedState} {FaultState}",
             "StartupFallbackHotKey",
             "GlobalHotKey",
-            InteractionHotKeyIdentifier,
+            registration.Identifier,
             requested.DisplayText,
-            OverlayHotKeyGesture.Default.DisplayText,
+            fallback.DisplayText,
             reason));
     }
 
     private void LogReplacementSuccess(
+        Registration registration,
         OverlayHotKeyGesture previous,
         OverlayHotKeyGesture applied)
     {
@@ -397,7 +463,7 @@ internal sealed class GlobalHotKeyController : IGlobalHotKeyController
             "Global hotkey replacement applied. {Operation} {Subsystem} {HotKeyId} {PreviousState} {RequestedState} {AppliedState} {FaultState}",
             "ReplaceHotKey",
             "GlobalHotKey",
-            InteractionHotKeyIdentifier,
+            registration.Identifier,
             previous.DisplayText,
             applied.DisplayText,
             applied.DisplayText,

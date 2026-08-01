@@ -9,11 +9,15 @@ public sealed record AppSettings(
     MetricsSettings Metrics,
     StartupSettings Startup)
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     public static AppSettings Defaults { get; } = new(
         CurrentVersion,
-        new WindowSettings(null, null, true),
+        new WindowSettings(
+            null,
+            null,
+            true,
+            OverlayHotKeyGesture.DashboardVisibilityDefault),
         new OverlaySettings(
             OverlayInteractionMode.ClickThrough,
             OverlayHotKeyGesture.Default),
@@ -24,7 +28,8 @@ public sealed record AppSettings(
 public sealed record WindowSettings(
     double? Left,
     double? Top,
-    bool IsDashboardVisible);
+    bool IsDashboardVisible,
+    OverlayHotKeyGesture? VisibilityHotKey = null);
 
 public sealed record OverlaySettings(
     OverlayInteractionMode InteractionMode,

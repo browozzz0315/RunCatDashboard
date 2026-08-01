@@ -12,6 +12,8 @@ public sealed class OverlayHotKeyGestureTests
 
         Assert.Equal("Ctrl + Shift + Win + 0", gesture.DisplayText);
         Assert.Equal("Ctrl + Alt + Shift + R", OverlayHotKeyGesture.Default.DisplayText);
+        Assert.Equal("Ctrl + Alt + Shift + D",
+            OverlayHotKeyGesture.DashboardVisibilityDefault.DisplayText);
     }
 
     [Fact]
@@ -46,13 +48,13 @@ public sealed class OverlayHotKeyGestureTests
     }
 
     [Fact]
-    public void DashboardVisibilityGesture_IsRejectedWithSpecificMessage()
+    public void DashboardVisibilityDefault_IsValidForDashboardPurpose()
     {
         var gesture = new OverlayHotKeyGesture(
             true, true, true, false, OverlayHotKeyKey.D);
 
-        Assert.False(gesture.TryValidate(out string? error));
-        Assert.Equal(OverlayHotKeyGesture.DashboardVisibilityConflictMessage, error);
+        Assert.True(gesture.TryValidate(out string? error));
+        Assert.Null(error);
     }
 
     [Theory]

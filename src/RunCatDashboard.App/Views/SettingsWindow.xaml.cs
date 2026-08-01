@@ -45,13 +45,11 @@ public partial class SettingsWindow : Window, ISettingsWindowHost
 
     private void OnHotKeyCapturePreviewMouseLeftButtonDown(
         object sender,
-        System.Windows.Input.MouseButtonEventArgs e) =>
-        _viewModel.BeginHotKeyCapture();
+        System.Windows.Input.MouseButtonEventArgs e) => BeginCaptureFor(sender);
 
     private void OnHotKeyCaptureGotKeyboardFocus(
         object sender,
-        KeyboardFocusChangedEventArgs e) =>
-        _viewModel.BeginHotKeyCapture();
+        KeyboardFocusChangedEventArgs e) => BeginCaptureFor(sender);
 
     private void OnWindowPreviewMouseDown(
         object sender,
@@ -59,7 +57,9 @@ public partial class SettingsWindow : Window, ISettingsWindowHost
     {
         if (e.OriginalSource is DependencyObject source &&
             (ReferenceEquals(source, HotKeyCaptureField) ||
-                HotKeyCaptureField.IsAncestorOf(source)))
+                HotKeyCaptureField.IsAncestorOf(source) ||
+                ReferenceEquals(source, VisibilityHotKeyCaptureField) ||
+                VisibilityHotKeyCaptureField.IsAncestorOf(source)))
         {
             return;
         }
@@ -74,7 +74,10 @@ public partial class SettingsWindow : Window, ISettingsWindowHost
         object sender,
         System.Windows.Input.KeyEventArgs e)
     {
-        if (!_viewModel.IsHotKeyCaptureActive)
+        bool isVisibilityCapture = ReferenceEquals(sender, VisibilityHotKeyCaptureField);
+        if (isVisibilityCapture
+                ? !_viewModel.IsVisibilityHotKeyCaptureActive
+                : !_viewModel.IsHotKeyCaptureActive)
         {
             return;
         }
@@ -85,23 +88,44 @@ public partial class SettingsWindow : Window, ISettingsWindowHost
         switch (result.Outcome)
         {
             case OverlayHotKeyCaptureOutcome.Captured:
-                _viewModel.ApplyCapturedHotKeyKey(result.Key!.Value);
+                if (isVisibilityCapture)
+                    _viewModel.ApplyCapturedVisibilityHotKeyKey(result.Key!.Value);
+                else
+                    _viewModel.ApplyCapturedHotKeyKey(result.Key!.Value);
                 Keyboard.ClearFocus();
                 break;
             case OverlayHotKeyCaptureOutcome.Cancelled:
-                _viewModel.HotKeyCaptureMessage = "已取消按鍵擷取，保留原本按鍵。";
+                SetCaptureMessage(isVisibilityCapture, "已取消按鍵擷取，保留原本按鍵。");
                 _viewModel.EndHotKeyCapture();
                 Keyboard.ClearFocus();
                 break;
             case OverlayHotKeyCaptureOutcome.ModifierOnly:
-                _viewModel.HotKeyCaptureMessage =
-                    "modifier 請使用上方選項；主要按鍵仍保留原值。";
+                SetCaptureMessage(
+                    isVisibilityCapture,
+                    "modifier 請使用上方選項；主要按鍵仍保留原值。");
                 break;
             default:
-                _viewModel.HotKeyCaptureMessage =
-                    "只支援 A-Z、0-9 或 F1-F12；主要按鍵仍保留原值。";
+                SetCaptureMessage(
+                    isVisibilityCapture,
+                    "只支援 A-Z、0-9 或 F1-F12；主要按鍵仍保留原值。");
                 break;
         }
+    }
+
+    private void BeginCaptureFor(object sender)
+    {
+        if (ReferenceEquals(sender, VisibilityHotKeyCaptureField))
+            _viewModel.BeginVisibilityHotKeyCapture();
+        else
+            _viewModel.BeginHotKeyCapture();
+    }
+
+    private void SetCaptureMessage(bool isVisibilityCapture, string message)
+    {
+        if (isVisibilityCapture)
+            _viewModel.VisibilityHotKeyCaptureMessage = message;
+        else
+            _viewModel.HotKeyCaptureMessage = message;
     }
 
     private nint OnWindowMessage(
