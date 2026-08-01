@@ -1,4 +1,4 @@
-# 系統匣與全域快捷鍵決策（Issue #9）
+# 系統匣與全域快捷鍵決策（Issues #9、#17、#32）
 
 ## 技術選擇與責任邊界
 
@@ -95,8 +95,8 @@ user-requested visibility 設為 false。系統匣 `退出` 是唯一真正退�
 
 - 預設 `Ctrl + Alt + Shift + R`：切換 Interactive／Click-through；可在 Settings
   自訂 Ctrl、Alt、Shift、Windows modifier 與 A-Z、0-9、F1-F12 主要按鍵。
-- 固定 `Ctrl + Alt + Shift + D`：切換 Dashboard user-requested visibility；不在
-  Issue #17 的自訂範圍內。
+- 預設 `Ctrl + Alt + Shift + D`：切換 Dashboard user-requested visibility；可在
+  Settings 以相同 modifier 與主要按鍵模型自訂。
 
 兩者使用不同 ID，保留既有快捷鍵 ID 與 `MOD_NOREPEAT`；預設組合的 native flags
 仍為 `MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT`。Controller 一次逐項嘗試
@@ -105,14 +105,17 @@ user-requested visibility 設為 false。系統匣 `退出` 是唯一真正退�
 
 自訂組合必須至少有一個 modifier 與一個允許的主要按鍵。明確禁止 `Alt+F4`、
 `Alt+Tab`、`Ctrl+Esc`、`Win+D`、`Win+E`、`Win+I`、`Win+L`、`Win+R`、`Win+Tab`。
-Settings Save 先驗證及套用，相同組合為 no-op。替換不同組合時先 unregister 舊組合，
-再 register 新組合；新註冊失敗會 rollback 舊組合，且 draft 不保存。rollback 也失敗
-會記錄錯誤、保持 Dashboard visible + Interactive，並保留 system tray 控制入口。
+兩組 RunCatDashboard 快捷鍵不可相同，且會在任何 native call 前拒絕。Settings Save
+分別驗證及套用各組；相同新舊組合為 no-op。替換不同組合時只 unregister 該用途的
+舊組合，再 register 新組合；新註冊失敗會 rollback 該組舊值，且 draft 不保存。
+Dashboard rollback 也失敗時記錄錯誤並保留 system tray；Overlay rollback 也失敗時
+另保持 Dashboard visible + Interactive。任一組替換都不碰另一組 registration。
 
-啟動時使用保存組合；version 1 或缺少欄位使用預設 `Ctrl+Alt+Shift+R`。無效保存值
-或保存組合無法註冊時回退預設；預設仍失敗不使 App crash，而以 Dashboard 訊息、
-structured log 與 system tray 保留可靠控制方式。首次註冊失敗、startup fallback、
-rollback failure 與 recovery 會記錄；正常 `WM_HOTKEY` 與每次按鍵事件不記錄。
+啟動時分別使用兩組保存值；version 1／2 或缺少欄位時補對應預設 R／D。任一保存值
+無效或無法註冊時只讓該組回退自己的預設；預設仍失敗不使 App crash，也不破壞
+另一組。Dashboard hotkey 失效時 system tray 仍可從 hidden 狀態恢復。首次註冊失敗、
+startup fallback、rollback failure 與 recovery 會記錄；正常 `WM_HOTKEY` 與每次按鍵
+事件不記錄。
 
 其中一項失敗不阻止另一項、tray 或 App 啟動。Dashboard 顯示可理解的中文
 fault；registration state 另保留 Win32 error code 供診斷，不直接把裸錯誤碼
@@ -146,12 +149,12 @@ timer。重複訊息安全，恢復失敗會保留上一個有效 icon，並將 
   以及左鍵單擊無作用、雙擊切換。
 - animated/static 可反覆切換；重新啟動回到 animated，且不建立設定檔變更。
 - Window Close 只隱藏；tray `退出` 才結束程序，且圖示不殘留。
-- 自訂 Overlay 快捷鍵／固定 D 在一般桌面雙向切換，按住時 `MOD_NOREPEAT` 生效。
+- 兩組自訂快捷鍵在一般桌面各自切換正確用途，按住時 `MOD_NOREPEAT` 生效。
 - A-Z、0-9、F1-F12 與四種 modifier 的 UI 顯示、保存值及實際註冊一致；禁止的
   系統組合不可保存。
 - 相同組合 Save 不重新註冊；新組合衝突時 rollback 舊組合；新舊組合都失敗時
   Dashboard 可見且為 Interactive，system tray 仍可控制。
-- 以其他程式占用自訂組合或 D 時，App 仍啟動、另一快捷鍵與 tray 仍可用，診斷清楚。
+- 以其他程式占用任一保存組合或其預設時，App 仍啟動、另一快捷鍵與 tray 仍可用，診斷清楚。
 - 結束 Explorer 後重新啟動，tray icon 恢復；重複 Explorer recovery 不產生重複圖示。
 - user hidden／user visible 與 fullscreen 進出組合符合 visibility precedence，
   且各種 hide 狀態下 tray animation 仍持續。

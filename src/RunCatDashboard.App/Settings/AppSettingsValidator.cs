@@ -31,6 +31,18 @@ public static class AppSettingsValidator
             candidate.TryValidate(out _)
                 ? candidate
                 : OverlayHotKeyGesture.Default;
+        OverlayHotKeyGesture visibilityHotKey = settings.Window?.VisibilityHotKey is { } visibilityCandidate &&
+            visibilityCandidate.TryValidate(out _)
+                ? visibilityCandidate
+                : OverlayHotKeyGesture.DashboardVisibilityDefault;
+        if (visibilityHotKey == hotKey)
+        {
+            visibilityHotKey = OverlayHotKeyGesture.DashboardVisibilityDefault;
+            if (visibilityHotKey == hotKey)
+            {
+                hotKey = OverlayHotKeyGesture.Default;
+            }
+        }
         int interval = settings.Metrics is not null &&
             AllowedSamplingIntervals.Contains(settings.Metrics.SamplingIntervalMilliseconds)
                 ? settings.Metrics.SamplingIntervalMilliseconds
@@ -38,7 +50,11 @@ public static class AppSettingsValidator
 
         return new AppSettings(
             AppSettings.CurrentVersion,
-            new WindowSettings(left, top, settings.Window?.IsDashboardVisible ?? true),
+            new WindowSettings(
+                left,
+                top,
+                settings.Window?.IsDashboardVisible ?? true,
+                visibilityHotKey),
             new OverlaySettings(mode, hotKey),
             new MetricsSettings(interval),
             new StartupSettings(settings.Startup?.RunAtLoginRequested ?? false));

@@ -1,17 +1,24 @@
-# 設定保存、Overlay 快捷鍵與 Windows 登入啟動
+# 設定保存、雙快捷鍵與 Windows 登入啟動
 
 ## Schema 與儲存位置
 
 設定檔固定為 `%LocalAppData%\RunCatDashboard\settings.json`，目前 schema
-version 為 `2`：
+version 為 `3`：
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "window": {
     "left": -420.5,
     "top": 18.25,
-    "isDashboardVisible": true
+    "isDashboardVisible": true,
+    "visibilityHotKey": {
+      "control": true,
+      "alt": true,
+      "shift": true,
+      "windows": false,
+      "key": "D"
+    }
   },
   "overlay": {
     "interactionMode": "ClickThrough",
@@ -36,16 +43,20 @@ version 為 `2`：
 不保存 Width／Height。沒有有效位置時使用既有 primary work area 右上角預設位置。
 `isDashboardVisible` 是 user-requested visibility，不是 fullscreen 暫時隱藏後的
 `Window.IsVisible`。`interactionMode` 同樣是 requested mode，不保存 native applied
-mode。`interactionHotKey` 結構化保存 modifier 與主要按鍵，不以顯示字串作為
-持久化格式。未知 JSON 欄位會忽略；不預建其他 Issue 的 section。
+mode。`interactionHotKey` 與 `visibilityHotKey` 都結構化保存 modifier 與主要按鍵，
+不以顯示字串作為持久化格式。未知 JSON 欄位會忽略；不預建其他 Issue 的 section。
 
 預設值為 Dashboard visible、`ClickThrough`、Overlay 模式快捷鍵
-`Ctrl+Alt+Shift+R`、1000ms、Windows 登入啟動關閉。
+`Ctrl+Alt+Shift+R`、Dashboard 顯示／隱藏快捷鍵 `Ctrl+Alt+Shift+D`、1000ms、
+Windows 登入啟動關閉。
 sampling interval 僅接受 250、500、1000、2000、5000ms，非法值直接回 1000ms，
 不做 clamp。非法 interaction mode 回 `ClickThrough`；無效或不成對的位置回未設定。
-schema version 1 仍可讀取：所有既有 window、overlay mode、metrics 與 startup 值均
-保留，缺少的 `interactionHotKey` 補預設值，下一次保存時寫為 version 2。無效或缺少
-快捷鍵也回預設值，不會使其他有效設定遺失。
+schema version 1 與 2 仍可讀取：所有既有 window、overlay mode、interaction hotkey、
+metrics 與 startup 值均保留，缺少的快捷鍵補各自預設值，下一次保存時寫為 version 3。
+無效或缺少的單一快捷鍵只回退該組預設；合法自訂值不會被 normalize 覆蓋。
+快捷鍵 JSON 只保存 `control`、`alt`、`shift`、`windows` 與 `key`；`DisplayText`
+及 `UsageWarning` 是 runtime 衍生值，不屬於持久化契約。舊 version 3 檔案若包含
+`displayText` 或 `usageWarning`，載入時會安全忽略。
 
 ## Load、fallback 與原子寫入
 
@@ -61,6 +72,9 @@ flush 與 disk flush 後，再以 replace（既有檔）或 move（首次建立�
 
 所有更新由 settings service 的單一 write gate 序列化。一般變更採 500ms trailing
 debounce；真正退出前取消待執行 debounce，並以 `FlushAsync` 保存最新 snapshot。
+Settings Window 的交易保存會在取得 write gate 後，以最新 current snapshot 建立
+candidate 並先寫入 temporary file。commit 前若 revision 已改變，便捨棄該 temporary
+file，以最新 snapshot 重新 merge；只有 revision 穩定時才原子 commit 並發布 current。
 
 ## 啟動順序與 hidden startup
 
@@ -69,15 +83,15 @@ HKCU Run、套用 requested visibility/interaction 與 sampling interval、建�
 MainWindow HWND、初始化 native styles/tray/hotkeys/sampling、restore/clamp 位置，
 最後才依 requested visibility 與 fullscreen policy 決定是否 Show。
 
-Overlay 模式快捷鍵註冊使用保存值。保存值無效時先使用預設值；有效但註冊失敗時
-也嘗試 `Ctrl+Alt+Shift+R`。回退成功後 runtime 與 settings current snapshot 都改為
-實際有效的預設組合。預設值仍註冊失敗時 App 不崩潰，Dashboard 強制保持可見及
-Interactive，並保留 system tray 作為第二控制入口。Dashboard 顯示／隱藏快捷鍵
-固定為 `Ctrl+Alt+Shift+D`，不屬於可自訂範圍。
+兩組快捷鍵各自註冊保存值。保存值無效或註冊失敗時，只嘗試該組預設 R 或 D；回退
+成功後 runtime 與 settings current snapshot 改為該組實際有效值。任一預設仍失敗時
+App 不崩潰，也不 unregister 或重新註冊另一組。Overlay 快捷鍵完全失效時 Dashboard
+保持可見及 Interactive；Dashboard 快捷鍵完全失效時保留 system tray，hidden Dashboard
+仍可由 tray 恢復。
 
 上次 requested hidden 時使用 `EnsureHandle` 建立 HWND，不先 Show 再 Hide，因此
 tray、hotkeys、sampling 與 shared tray animation 仍會初始化且不產生 Dashboard
-閃爍。tray 或 D hotkey 可再次要求顯示。
+閃爍。tray 或目前有效的 Dashboard hotkey 可再次要求顯示。
 
 Fullscreen policy 只改 policy visibility input，不覆寫保存的 user-requested
 visibility。使用者 hidden 後進出 fullscreen 仍 hidden；user visible 且 fullscreen
@@ -113,14 +127,14 @@ tray 選單的「設定...」開啟單一 Settings Window；重複要求會 rest
 window 並 Activate，Closed 後可重新建立。它不會成為 `Application.MainWindow`，
 Dashboard hidden 時也能開啟，關閉它不會退出 App。
 
-每次開啟從 current settings 建立 draft。取消只關閉且不套用快捷鍵；儲存先驗證
-Overlay 快捷鍵並要求 Windows-specific controller 套用，成功後才更新 requested
-Dashboard visibility、interaction mode、sampling interval，reconcile HKCU Run，再
-flush JSON。相同快捷鍵是 no-op，不重複 unregister/register。新組合會先解除舊組合
-再註冊；新註冊失敗時 rollback 舊組合且不保存 draft。rollback 也失敗時不保存，
-Dashboard 強制保持可見及 Interactive，system tray 保持可用，Settings Window 顯示
-可理解錯誤。MainWindow 位置以及 tray/hotkey 引起的 visibility/interaction 變更仍
-自動保存，不等待 Settings Window 儲存。
+每次開啟從 current settings 建立兩組快捷鍵 draft。取消只關閉且不套用；儲存先驗證
+兩組及彼此不得相同，再要求 Windows-specific controller 分別套用。每組相同新舊值是
+no-op；不同值只解除及註冊該組，新組合失敗時 rollback 該組原值且不更新 current 或
+JSON。兩組 native 套用完成後，以 atomic write 保存完整 candidate；保存失敗時 rollback
+已套用的 gesture，current snapshot、requested visibility、interaction mode、sampling 與
+startup state 都不發布新值。Dashboard rollback 失敗保留 system tray；Overlay rollback
+失敗另保持 visible + Interactive。MainWindow 位置以及 tray/hotkey 引起的
+visibility/interaction 變更仍自動保存，不等待 Settings Window 儲存。
 
 App 使用 `OnExplicitShutdown`。tray Exit 先做冪等 BeginExit，擷取最後位置並 flush，
 關閉 Settings Window，再關閉 MainWindow；MainWindow cleanup 解除 hotkeys/message

@@ -260,7 +260,9 @@ public partial class App : System.Windows.Application
                 new Win32GlobalHotKeyApi(),
                 provider.GetRequiredService<ILogger<GlobalHotKeyController>>(),
                 provider.GetRequiredService<ISettingsService>()
-                    .Current.Overlay.InteractionHotKey));
+                    .Current.Overlay.InteractionHotKey,
+                provider.GetRequiredService<ISettingsService>()
+                    .Current.Window.VisibilityHotKey));
         services.AddSingleton<IOverlayHotKeyMessageHandler>(provider =>
             new OverlayHotKeyMessageHandler(
                 provider.GetRequiredService<IGlobalHotKeyController>(),

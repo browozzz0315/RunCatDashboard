@@ -23,11 +23,13 @@ public sealed class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task SchemaV2_RoundTripsAllContractFields()
+    public async Task SchemaV3_RoundTripsAllContractFields()
     {
+        var visibilityHotKey = new OverlayHotKeyGesture(
+            false, true, true, true, OverlayHotKeyKey.F11);
         var expected = new AppSettings(
-            2,
-            new WindowSettings(-420.5, 18.25, false),
+            3,
+            new WindowSettings(-420.5, 18.25, false, visibilityHotKey),
             new OverlaySettings(
                 OverlayInteractionMode.Interactive,
                 new OverlayHotKeyGesture(true, false, true, true, OverlayHotKeyKey.F12)),
@@ -40,11 +42,63 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         Assert.Equal(expected, result.Settings);
         string json = await File.ReadAllTextAsync(Path.Combine(_directory, "settings.json"));
-        Assert.Contains("\"version\": 2", json);
+        Assert.Contains("\"version\": 3", json);
+        Assert.Contains("\"visibilityHotKey\"", json);
         Assert.Contains("\"interactionHotKey\"", json);
         Assert.Contains("\"key\": \"F12\"", json);
+        Assert.DoesNotContain("displayText", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("usageWarning", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("width", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("fullscreen", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SchemaV3_LegacyComputedHotKeyPropertiesAreIgnoredAndRecomputed()
+    {
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(Path.Combine(_directory, "settings.json"), """
+            {
+              "version": 3,
+              "window": {
+                "left": null,
+                "top": null,
+                "isDashboardVisible": true,
+                "visibilityHotKey": {
+                  "control": true,
+                  "alt": true,
+                  "shift": true,
+                  "windows": false,
+                  "key": "D",
+                  "displayText": "舊的錯誤顯示值",
+                  "usageWarning": "舊的錯誤警告"
+                }
+              },
+              "overlay": {
+                "interactionMode": "ClickThrough",
+                "interactionHotKey": {
+                  "control": true,
+                  "alt": false,
+                  "shift": false,
+                  "windows": false,
+                  "key": "S",
+                  "displayText": "不可採用此值",
+                  "usageWarning": null
+                }
+              },
+              "metrics": { "samplingIntervalMilliseconds": 1000 },
+              "startup": { "runAtLoginRequested": false }
+            }
+            """);
+
+        SettingsLoadResult result = await CreateStore().LoadAsync();
+
+        Assert.Null(result.Diagnostic);
+        Assert.Equal("Ctrl + Alt + Shift + D",
+            result.Settings.Window.VisibilityHotKey!.DisplayText);
+        Assert.Equal("Ctrl + S", result.Settings.Overlay.InteractionHotKey!.DisplayText);
+        Assert.Equal(
+            OverlayHotKeyGesture.CommonApplicationGestureWarning,
+            result.Settings.Overlay.InteractionHotKey.UsageWarning);
     }
 
     [Fact]
@@ -63,8 +117,14 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         SettingsLoadResult result = await CreateStore().LoadAsync();
 
-        Assert.Equal(2, result.Settings.Version);
-        Assert.Equal(new WindowSettings(-420.5, 18.25, false), result.Settings.Window);
+        Assert.Equal(3, result.Settings.Version);
+        Assert.Equal(
+            new WindowSettings(
+                -420.5,
+                18.25,
+                false,
+                OverlayHotKeyGesture.DashboardVisibilityDefault),
+            result.Settings.Window);
         Assert.Equal(OverlayInteractionMode.Interactive, result.Settings.Overlay.InteractionMode);
         Assert.Equal(OverlayHotKeyGesture.Default, result.Settings.Overlay.InteractionHotKey);
         Assert.Equal(5000, result.Settings.Metrics.SamplingIntervalMilliseconds);
@@ -73,28 +133,70 @@ public sealed class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task SchemaV2_ColdStartRegistersPersistedHotKeyInsteadOfDefault()
+    public async Task SchemaV2_MissingVisibilityHotKey_UsesDashboardDefault()
     {
-        var persisted = new OverlayHotKeyGesture(
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(Path.Combine(_directory, "settings.json"), """
+            {
+              "version": 2,
+              "window": { "left": 12.5, "top": -8.25, "isDashboardVisible": false },
+              "overlay": {
+                "interactionMode": "Interactive",
+                "interactionHotKey": {
+                  "control": true, "alt": false, "shift": true, "windows": false, "key": "F8"
+                }
+              },
+              "metrics": { "samplingIntervalMilliseconds": 500 },
+              "startup": { "runAtLoginRequested": true }
+            }
+            """);
+
+        SettingsLoadResult result = await CreateStore().LoadAsync();
+
+        Assert.Equal(3, result.Settings.Version);
+        Assert.Equal(OverlayHotKeyGesture.DashboardVisibilityDefault,
+            result.Settings.Window.VisibilityHotKey);
+        Assert.Equal(OverlayHotKeyKey.F8, result.Settings.Overlay.InteractionHotKey!.Key);
+        Assert.Equal(12.5, result.Settings.Window.Left);
+        Assert.Equal(-8.25, result.Settings.Window.Top);
+        Assert.False(result.Settings.Window.IsDashboardVisible);
+        Assert.Equal(500, result.Settings.Metrics.SamplingIntervalMilliseconds);
+        Assert.True(result.Settings.Startup.RunAtLoginRequested);
+    }
+
+    [Fact]
+    public async Task SchemaV3_ColdStartRegistersBothPersistedHotKeysInsteadOfDefaults()
+    {
+        var persistedInteraction = new OverlayHotKeyGesture(
             false, true, true, true, OverlayHotKeyKey.F8);
+        var persistedVisibility = new OverlayHotKeyGesture(
+            true, false, true, true, OverlayHotKeyKey.F9);
         await CreateStore().SaveAsync(AppSettings.Defaults with
         {
+            Window = AppSettings.Defaults.Window with
+            {
+                VisibilityHotKey = persistedVisibility
+            },
             Overlay = AppSettings.Defaults.Overlay with
             {
-                InteractionHotKey = persisted
+                InteractionHotKey = persistedInteraction
             }
         });
         SettingsLoadResult loaded = await CreateStore().LoadAsync();
         var native = new RecordingGlobalHotKeyApi();
         using var controller = new GlobalHotKeyController(
             native,
-            initialInteractionGesture: loaded.Settings.Overlay.InteractionHotKey);
+            initialInteractionGesture: loaded.Settings.Overlay.InteractionHotKey,
+            initialVisibilityGesture: loaded.Settings.Window.VisibilityHotKey);
 
         controller.RegisterAll(new nint(1234));
 
         Assert.Contains(native.Registrations, registration =>
             registration.Identifier == GlobalHotKeyController.InteractionHotKeyIdentifier &&
-            registration.VirtualKey == (uint)persisted.Key);
+            registration.VirtualKey == (uint)persistedInteraction.Key);
+        Assert.Contains(native.Registrations, registration =>
+            registration.Identifier == GlobalHotKeyController.VisibilityHotKeyIdentifier &&
+            registration.VirtualKey == (uint)persistedVisibility.Key);
         Assert.DoesNotContain(native.Registrations, registration =>
             registration.Identifier == GlobalHotKeyController.InteractionHotKeyIdentifier &&
             registration.VirtualKey == (uint)OverlayHotKeyGesture.Default.Key);
@@ -116,6 +218,24 @@ public sealed class JsonSettingsStoreTests : IDisposable
         AppSettings normalized = AppSettingsValidator.Normalize(settings);
 
         Assert.Equal(gesture, normalized.Overlay.InteractionHotKey);
+    }
+
+    [Fact]
+    public void Normalize_PreservesValidCustomVisibilityHotKey()
+    {
+        var gesture = new OverlayHotKeyGesture(
+            true, false, true, true, OverlayHotKeyKey.D7);
+        AppSettings settings = AppSettings.Defaults with
+        {
+            Window = AppSettings.Defaults.Window with
+            {
+                VisibilityHotKey = gesture
+            }
+        };
+
+        AppSettings normalized = AppSettingsValidator.Normalize(settings);
+
+        Assert.Equal(gesture, normalized.Window.VisibilityHotKey);
     }
 
     [Fact]

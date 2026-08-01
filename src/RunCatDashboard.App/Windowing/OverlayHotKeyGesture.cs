@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace RunCatDashboard.App.Windowing;
 
 public enum OverlayHotKeyKey
@@ -61,8 +63,8 @@ public sealed record OverlayHotKeyGesture(
     bool Windows,
     OverlayHotKeyKey Key)
 {
-    public const string DashboardVisibilityConflictMessage =
-        "Ctrl + Alt + Shift + D 已用於顯示或隱藏 Dashboard，請選擇其他組合。";
+    public const string DuplicateGestureMessage =
+        "Dashboard 顯示／隱藏快捷鍵不可與 Overlay 模式快捷鍵相同，請選擇不同組合。";
     public const string CommonApplicationGestureWarning =
         "此組合常用於其他程式，RunCatDashboard 執行期間可能使原功能無法使用。";
 
@@ -73,27 +75,31 @@ public sealed record OverlayHotKeyGesture(
         Windows: false,
         OverlayHotKeyKey.R);
 
+    public static OverlayHotKeyGesture DashboardVisibilityDefault { get; } = new(
+        Control: true,
+        Alt: true,
+        Shift: true,
+        Windows: false,
+        OverlayHotKeyKey.D);
+
     public static IReadOnlyList<OverlayHotKeyKey> SupportedKeys { get; } =
         Enum.GetValues<OverlayHotKeyKey>()
             .Where(IsSupportedPrimaryKey)
             .ToArray();
 
+    [JsonIgnore]
     public string DisplayText => string.Join(" + ", GetDisplayParts());
+
+    [JsonIgnore]
     public string? UsageWarning => IsCommonApplicationGesture()
         ? CommonApplicationGestureWarning
         : null;
 
     public bool TryValidate(out string? error)
     {
-        if (IsDashboardVisibilityGesture())
-        {
-            error = DashboardVisibilityConflictMessage;
-            return false;
-        }
-
         if (IsBlockedSystemGesture())
         {
-            error = $"系統快捷鍵 {DisplayText} 不可用於 Overlay 模式切換。";
+            error = $"系統快捷鍵 {DisplayText} 不可用於 RunCatDashboard。";
             return false;
         }
 
@@ -105,7 +111,7 @@ public sealed record OverlayHotKeyGesture(
 
         if (!Control && !Alt && !Shift && !Windows)
         {
-            error = "Overlay 模式快捷鍵至少需要一個 modifier。";
+            error = "快捷鍵至少需要一個 modifier。";
             return false;
         }
 
@@ -152,9 +158,6 @@ public sealed record OverlayHotKeyGesture(
             _ => false
         };
     }
-
-    private bool IsDashboardVisibilityGesture() =>
-        Control && Alt && Shift && !Windows && Key == OverlayHotKeyKey.D;
 
     private bool IsCommonApplicationGesture() =>
         Control && !Alt && !Shift && !Windows &&

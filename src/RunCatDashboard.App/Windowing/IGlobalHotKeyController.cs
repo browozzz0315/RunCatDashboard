@@ -29,9 +29,13 @@ public interface IGlobalHotKeyController : IDisposable
 
     OverlayHotKeyGesture InteractionGesture { get; }
 
+    OverlayHotKeyGesture VisibilityGesture { get; }
+
     IReadOnlyList<GlobalHotKeyRegistrationState> RegisterAll(nint windowHandle);
 
     GlobalHotKeyApplyResult ApplyInteractionGesture(OverlayHotKeyGesture gesture);
+
+    GlobalHotKeyApplyResult ApplyVisibilityGesture(OverlayHotKeyGesture gesture);
 
     bool TryGetAction(int message, nint parameter, out GlobalHotKeyAction action);
 }

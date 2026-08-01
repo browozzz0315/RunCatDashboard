@@ -66,6 +66,9 @@ public sealed class ExplicitShutdownCoordinatorTests
         public event Action<string?>? DiagnosticChanged { add { } remove { } }
         public Task LoadAsync(CancellationToken token = default) => Task.CompletedTask;
         public bool Update(Func<AppSettings, AppSettings> update) => false;
+        public Task<bool> TryReplaceCurrentAsync(
+            Func<AppSettings, AppSettings> replacement,
+            CancellationToken token = default) => Task.FromResult(true);
         public Task FlushAsync(CancellationToken token = default)
         {
             order.Add("flush");

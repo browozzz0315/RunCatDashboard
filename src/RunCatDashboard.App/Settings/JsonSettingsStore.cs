@@ -89,7 +89,7 @@ internal sealed class JsonSettingsStore : ISettingsStore
                 element.TryGetInt32(out int parsedVersion)
                     ? parsedVersion
                     : 0;
-            if (version is not 1 && version != AppSettings.CurrentVersion)
+            if (version is not 1 and not 2 && version != AppSettings.CurrentVersion)
             {
                 string backup = BackupInvalidFile($"unsupported-v{version}");
                 return new SettingsLoadResult(
@@ -131,6 +131,15 @@ internal sealed class JsonSettingsStore : ISettingsStore
 
     public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
+        using IPreparedSettingsWrite prepared =
+            await PrepareSaveAsync(settings, cancellationToken).ConfigureAwait(false);
+        prepared.Commit();
+    }
+
+    public async Task<IPreparedSettingsWrite> PrepareSaveAsync(
+        AppSettings settings,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(settings);
         _fileSystem.CreateDirectory(_directory);
         string temporaryPath = Path.Combine(
@@ -152,16 +161,12 @@ internal sealed class JsonSettingsStore : ISettingsStore
                 }
             }
 
-            if (_fileSystem.FileExists(_settingsPath))
-            {
-                _fileSystem.ReplaceFile(temporaryPath, _settingsPath);
-            }
-            else
-            {
-                _fileSystem.MoveFile(temporaryPath, _settingsPath, overwrite: false);
-            }
+            return new PreparedSettingsWrite(
+                _fileSystem,
+                temporaryPath,
+                _settingsPath);
         }
-        finally
+        catch
         {
             if (_fileSystem.FileExists(temporaryPath))
             {
@@ -174,6 +179,7 @@ internal sealed class JsonSettingsStore : ISettingsStore
                     // The write diagnostic is more useful than a cleanup exception.
                 }
             }
+            throw;
         }
     }
 
@@ -282,5 +288,55 @@ internal sealed class JsonSettingsStore : ISettingsStore
             Utf8JsonWriter writer,
             OverlayHotKeyKey value,
             JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
+    }
+
+    private sealed class PreparedSettingsWrite(
+        ISettingsFileSystem fileSystem,
+        string temporaryPath,
+        string settingsPath) : IPreparedSettingsWrite
+    {
+        private bool _committed;
+        private bool _disposed;
+
+        public void Commit()
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_committed)
+            {
+                return;
+            }
+
+            if (fileSystem.FileExists(settingsPath))
+            {
+                fileSystem.ReplaceFile(temporaryPath, settingsPath);
+            }
+            else
+            {
+                fileSystem.MoveFile(temporaryPath, settingsPath, overwrite: false);
+            }
+            _committed = true;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            if (_committed || !fileSystem.FileExists(temporaryPath))
+            {
+                return;
+            }
+
+            try
+            {
+                fileSystem.DeleteFile(temporaryPath);
+            }
+            catch
+            {
+                // The write diagnostic is more useful than a cleanup exception.
+            }
+        }
     }
 }

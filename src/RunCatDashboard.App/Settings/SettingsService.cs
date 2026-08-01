@@ -11,6 +11,9 @@ public interface ISettingsService : IAsyncDisposable
     event Action<string?>? DiagnosticChanged;
     Task LoadAsync(CancellationToken cancellationToken = default);
     bool Update(Func<AppSettings, AppSettings> update);
+    Task<bool> TryReplaceCurrentAsync(
+        Func<AppSettings, AppSettings> replacement,
+        CancellationToken cancellationToken = default);
     Task FlushAsync(CancellationToken cancellationToken = default);
 }
 
@@ -101,6 +104,100 @@ internal sealed class SettingsService : ISettingsService
         return true;
     }
 
+    public async Task<bool> TryReplaceCurrentAsync(
+        Func<AppSettings, AppSettings> replacement,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(replacement);
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            while (true)
+            {
+                AppSettings candidate;
+                long baseRevision;
+                lock (_gate)
+                {
+                    ObjectDisposedException.ThrowIf(_isDisposed, this);
+                    baseRevision = _revision;
+                    candidate = AppSettingsValidator.Normalize(replacement(_current));
+                }
+
+                IPreparedSettingsWrite prepared;
+                try
+                {
+                    prepared = await _store
+                        .PrepareSaveAsync(candidate, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    ReportPersistenceFailure(
+                        candidate,
+                        exception,
+                        "設定無法保存，設定未變更。");
+                    return false;
+                }
+
+                using (prepared)
+                {
+                    CancellationTokenSource? debounce = null;
+                    bool revisionChanged;
+                    try
+                    {
+                        lock (_gate)
+                        {
+                            ObjectDisposedException.ThrowIf(_isDisposed, this);
+                            revisionChanged = _revision != baseRevision;
+                            if (!revisionChanged)
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                prepared.Commit();
+                                debounce = _debounceSource;
+                                _debounceSource = null;
+                                _current = candidate;
+                                _revision++;
+                                _savedRevision = _revision;
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception exception)
+                    {
+                        ReportPersistenceFailure(
+                            candidate,
+                            exception,
+                            "設定無法保存，設定未變更。");
+                        return false;
+                    }
+
+                    if (revisionChanged)
+                    {
+                        continue;
+                    }
+
+                    debounce?.Cancel();
+                    debounce?.Dispose();
+                    SetDiagnostic(null);
+                    ReportPersistenceRecovery(candidate);
+                    Changed?.Invoke(candidate);
+                    return true;
+                }
+            }
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
     public async Task FlushAsync(CancellationToken cancellationToken = default)
     {
         CancellationTokenSource? debounce;
@@ -160,15 +257,7 @@ internal sealed class SettingsService : ISettingsService
                 await _store.SaveAsync(snapshot, cancellationToken).ConfigureAwait(false);
                 lock (_gate) _savedRevision = Math.Max(_savedRevision, revision);
                 SetDiagnostic(null);
-                if (_writeFaultEpisode.Observe(isFaulted: false) == FaultEpisodeTransition.Recovered)
-                {
-                    TryLog(() => _logger.LogInformation(
-                        "Settings persistence recovered. {Operation} {Subsystem} {FaultState} {SettingsVersion}",
-                        "SaveSettings",
-                        "Settings",
-                        "Recovered",
-                        snapshot.Version));
-                }
+                ReportPersistenceRecovery(snapshot);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -176,23 +265,47 @@ internal sealed class SettingsService : ISettingsService
             }
             catch (Exception exception)
             {
-                if (_writeFaultEpisode.Observe(isFaulted: true) == FaultEpisodeTransition.Failed)
-                {
-                    TryLog(() => _logger.LogError(
-                        exception,
-                        "Settings persistence failed. {Operation} {Subsystem} {FaultState} {SettingsVersion} {HResult}",
-                        "SaveSettings",
-                        "Settings",
-                        "Faulted",
-                        snapshot.Version,
-                        exception.HResult));
-                }
-                SetDiagnostic("保存設定失敗，將於下次變更或結束程式時重試。");
+                ReportPersistenceFailure(
+                    snapshot,
+                    exception,
+                    "設定已在目前執行期間套用，但無法寫入設定檔，重新啟動後可能不會保留。");
             }
         }
         finally
         {
             _writeGate.Release();
+        }
+    }
+
+    private void ReportPersistenceFailure(
+        AppSettings snapshot,
+        Exception exception,
+        string diagnostic)
+    {
+        if (_writeFaultEpisode.Observe(isFaulted: true) == FaultEpisodeTransition.Failed)
+        {
+            TryLog(() => _logger.LogError(
+                exception,
+                "Settings persistence failed. {Operation} {Subsystem} {FaultState} {SettingsVersion} {HResult}",
+                "SaveSettings",
+                "Settings",
+                "Faulted",
+                snapshot.Version,
+                exception.HResult));
+        }
+        SetDiagnostic(diagnostic);
+    }
+
+    private void ReportPersistenceRecovery(AppSettings snapshot)
+    {
+        if (_writeFaultEpisode.Observe(isFaulted: false) == FaultEpisodeTransition.Recovered)
+        {
+            TryLog(() => _logger.LogInformation(
+                "Settings persistence recovered. {Operation} {Subsystem} {FaultState} {SettingsVersion}",
+                "SaveSettings",
+                "Settings",
+                "Recovered",
+                snapshot.Version));
         }
     }
 

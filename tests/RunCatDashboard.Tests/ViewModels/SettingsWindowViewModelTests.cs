@@ -49,6 +49,7 @@ public sealed class SettingsWindowViewModelTests
         Assert.Equal(
             (false, OverlayInteractionMode.Interactive,
                 new OverlayHotKeyGesture(false, true, true, true, OverlayHotKeyKey.F12),
+                OverlayHotKeyGesture.DashboardVisibilityDefault,
                 250, true),
             application.LastDraft);
         Assert.True(viewModel.RunAtLoginApplied);
@@ -68,6 +69,57 @@ public sealed class SettingsWindowViewModelTests
         Assert.Equal(viewModel.InteractionHotKey.DisplayText,
             viewModel.InteractionHotKeyDisplayText);
         Assert.Equal("Ctrl + Win + 7", viewModel.InteractionHotKeyDisplayText);
+    }
+
+    [Fact]
+    public void VisibilityDisplayText_IsAlwaysDerivedFromDraftGesture()
+    {
+        var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService())
+        {
+            VisibilityHotKeyAlt = false,
+            VisibilityHotKeyShift = false,
+            VisibilityHotKeyWindows = true,
+            VisibilityHotKeyKey = OverlayHotKeyKey.F12
+        };
+
+        Assert.Equal(viewModel.VisibilityHotKey.DisplayText,
+            viewModel.VisibilityHotKeyDisplayText);
+        Assert.Equal("Ctrl + Win + F12", viewModel.VisibilityHotKeyDisplayText);
+    }
+
+    [Fact]
+    public void KeyCaptureStateAndAdapterModel_AreReusableForBothHotKeys()
+    {
+        var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService());
+
+        viewModel.BeginHotKeyCapture();
+        Assert.True(viewModel.IsHotKeyCaptureActive);
+        Assert.False(viewModel.IsVisibilityHotKeyCaptureActive);
+        viewModel.ApplyCapturedHotKeyKey(OverlayHotKeyKey.F8);
+
+        viewModel.BeginVisibilityHotKeyCapture();
+        Assert.False(viewModel.IsHotKeyCaptureActive);
+        Assert.True(viewModel.IsVisibilityHotKeyCaptureActive);
+        viewModel.ApplyCapturedVisibilityHotKeyKey(OverlayHotKeyKey.D9);
+
+        Assert.Equal(OverlayHotKeyKey.F8, viewModel.InteractionHotKey.Key);
+        Assert.Equal(OverlayHotKeyKey.D9, viewModel.VisibilityHotKey.Key);
+        Assert.False(viewModel.IsHotKeyCaptureActive);
+        Assert.False(viewModel.IsVisibilityHotKeyCaptureActive);
+    }
+
+    [Fact]
+    public void DuplicateDraftGestures_ShowPurposeSpecificInlineError()
+    {
+        var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService())
+        {
+            VisibilityHotKey = OverlayHotKeyGesture.Default
+        };
+
+        Assert.Equal(OverlayHotKeyGesture.DuplicateGestureMessage,
+            viewModel.InteractionHotKeyError);
+        Assert.Equal(OverlayHotKeyGesture.DuplicateGestureMessage,
+            viewModel.VisibilityHotKeyError);
     }
 
     [Fact]
@@ -154,11 +206,13 @@ public sealed class SettingsWindowViewModelTests
         public RunAtLoginState RunAtLoginState { get; } = new(false, false, null);
         internal int ApplyCount { get; private set; }
         internal Exception? ApplyException { get; init; }
-        internal (bool, OverlayInteractionMode, OverlayHotKeyGesture, int, bool) LastDraft { get; private set; }
+        internal (bool, OverlayInteractionMode, OverlayHotKeyGesture,
+            OverlayHotKeyGesture, int, bool) LastDraft { get; private set; }
         public Task<RunAtLoginState> ApplyDraftAsync(
             bool dashboardVisible,
             OverlayInteractionMode interactionMode,
             OverlayHotKeyGesture interactionHotKey,
+            OverlayHotKeyGesture visibilityHotKey,
             int samplingIntervalMilliseconds,
             bool runAtLoginRequested,
             CancellationToken cancellationToken = default)
@@ -168,11 +222,15 @@ public sealed class SettingsWindowViewModelTests
             {
                 return Task.FromException<RunAtLoginState>(ApplyException);
             }
-            LastDraft = (dashboardVisible, interactionMode, interactionHotKey,
+            LastDraft = (dashboardVisible, interactionMode, interactionHotKey, visibilityHotKey,
                 samplingIntervalMilliseconds, runAtLoginRequested);
             Current = Current with
             {
-                Window = Current.Window with { IsDashboardVisible = dashboardVisible },
+                Window = Current.Window with
+                {
+                    IsDashboardVisible = dashboardVisible,
+                    VisibilityHotKey = visibilityHotKey
+                },
                 Overlay = new OverlaySettings(interactionMode, interactionHotKey),
                 Metrics = new MetricsSettings(samplingIntervalMilliseconds),
                 Startup = new StartupSettings(runAtLoginRequested)

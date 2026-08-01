@@ -1,5 +1,6 @@
 using System.IO;
 using RunCatDashboard.App.Animation;
+using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.Settings;
@@ -115,10 +116,11 @@ public sealed class SettingsApplicationServiceTests
             false,
             OverlayInteractionMode.Interactive,
             gesture,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
             500,
             true);
 
-        Assert.Equal(["apply-hotkey", "update-settings", "flush-settings"], operations);
+        Assert.Equal(["apply-hotkey", "save-settings"], operations);
         Assert.Equal(gesture, settings.Current.Overlay.InteractionHotKey);
         Assert.False(settings.Current.Window.IsDashboardVisible);
         Assert.Equal(OverlayInteractionMode.Interactive,
@@ -155,6 +157,7 @@ public sealed class SettingsApplicationServiceTests
                 false,
                 OverlayInteractionMode.Interactive,
                 new OverlayHotKeyGesture(true, false, false, false, OverlayHotKeyKey.F8),
+                OverlayHotKeyGesture.DashboardVisibilityDefault,
                 250,
                 true));
 
@@ -165,7 +168,7 @@ public sealed class SettingsApplicationServiceTests
     }
 
     [Fact]
-    public async Task ApplyDraft_DashboardVisibilityGesture_DoesNotCallHotKeyController()
+    public async Task ApplyDraft_DuplicateGestures_DoesNotCallHotKeyController()
     {
         var operations = new List<string>();
         var settings = new FakeSettingsService(operations);
@@ -187,16 +190,17 @@ public sealed class SettingsApplicationServiceTests
                     true,
                     OverlayInteractionMode.ClickThrough,
                     gesture,
+                    gesture,
                     1000,
                     false));
 
-        Assert.Equal(OverlayHotKeyGesture.DashboardVisibilityConflictMessage, exception.Message);
+        Assert.Equal(OverlayHotKeyGesture.DuplicateGestureMessage, exception.Message);
         Assert.Empty(operations);
         Assert.Equal(AppSettings.Defaults, settings.Current);
     }
 
     [Fact]
-    public async Task Save_DashboardVisibilityGesture_ShowsSpecificUiErrorAndStaysOpen()
+    public async Task Save_DuplicateGestures_ShowsSpecificUiErrorAndStaysOpen()
     {
         var operations = new List<string>();
         var settings = new FakeSettingsService(operations);
@@ -219,7 +223,7 @@ public sealed class SettingsApplicationServiceTests
         await viewModel.SaveCommand.ExecutionTask!;
 
         Assert.Equal(
-            OverlayHotKeyGesture.DashboardVisibilityConflictMessage,
+            OverlayHotKeyGesture.DuplicateGestureMessage,
             viewModel.ValidationError);
         Assert.Equal(0, closes);
         Assert.Empty(operations);
@@ -258,7 +262,7 @@ public sealed class SettingsApplicationServiceTests
         viewModel.SaveCommand.Execute(null);
         await viewModel.SaveCommand.ExecutionTask!;
 
-        Assert.Equal("Overlay 模式快捷鍵至少需要一個 modifier。", viewModel.ValidationError);
+        Assert.Equal("快捷鍵至少需要一個 modifier。", viewModel.ValidationError);
         Assert.Equal(0, closes);
         Assert.Empty(operations);
 
@@ -270,7 +274,7 @@ public sealed class SettingsApplicationServiceTests
 
         Assert.Null(viewModel.ValidationError);
         Assert.Equal(1, closes);
-        Assert.Equal(["apply-hotkey", "update-settings", "flush-settings"], operations);
+        Assert.Equal(["apply-hotkey", "save-settings"], operations);
     }
 
     [Fact]
@@ -300,6 +304,7 @@ public sealed class SettingsApplicationServiceTests
                 false,
                 OverlayInteractionMode.ClickThrough,
                 new OverlayHotKeyGesture(true, false, false, false, OverlayHotKeyKey.F8),
+                OverlayHotKeyGesture.DashboardVisibilityDefault,
                 1000,
                 false));
 
@@ -307,6 +312,353 @@ public sealed class SettingsApplicationServiceTests
         Assert.Equal(OverlayInteractionMode.Interactive, interaction.LastRequestedMode);
         Assert.Equal(AppSettings.Defaults, settings.Current);
     }
+
+    [Fact]
+    public async Task ApplyDraft_CustomVisibilityHotKey_PersistsAndKeepsInteractionGesture()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations);
+        var hotKeys = new FakeHotKeyController(operations);
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = new SettingsApplicationService(
+            settings,
+            new WindowVisibilityCoordinator(),
+            new FakeInteractionAction(),
+            hotKeys,
+            mainViewModel,
+            new FakeRunAtLoginService());
+        var visibilityGesture = new OverlayHotKeyGesture(
+            true, false, true, true, OverlayHotKeyKey.F9);
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            visibilityGesture,
+            1000,
+            false);
+
+        Assert.Equal(visibilityGesture, settings.Current.Window.VisibilityHotKey);
+        Assert.Equal(OverlayHotKeyGesture.Default,
+            settings.Current.Overlay.InteractionHotKey);
+        Assert.Single(settings.PersistedSettings);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_SaveFails_RollsBackRuntimeAndDoesNotPublishSnapshot()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations) { SaveSucceeds = false };
+        AppSettings original = settings.Current;
+        var hotKeys = new FakeHotKeyController(operations);
+        var visibility = new WindowVisibilityCoordinator();
+        var interaction = new FakeInteractionAction();
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = new SettingsApplicationService(
+            settings,
+            visibility,
+            interaction,
+            hotKeys,
+            mainViewModel,
+            new FakeRunAtLoginService());
+        var visibilityGesture = new OverlayHotKeyGesture(
+            true, false, true, true, OverlayHotKeyKey.F9);
+
+        HotKeyConfigurationException exception =
+            await Assert.ThrowsAsync<HotKeyConfigurationException>(() =>
+                service.ApplyDraftAsync(
+                    false,
+                    OverlayInteractionMode.Interactive,
+                    OverlayHotKeyGesture.Default,
+                    visibilityGesture,
+                    250,
+                    true));
+
+        Assert.Equal("設定無法保存，已恢復先前的快捷鍵與設定。", exception.Message);
+        Assert.Equal(original, settings.Current);
+        Assert.Empty(settings.PersistedSettings);
+        Assert.Equal(OverlayHotKeyGesture.DashboardVisibilityDefault,
+            hotKeys.VisibilityGesture);
+        Assert.True(visibility.State.IsUserRequestedVisible);
+        Assert.Null(interaction.LastRequestedMode);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_OnlyDashboardGestureChanged_DoesNotApplyInteractionGesture()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations);
+        var hotKeys = new FakeHotKeyController(operations);
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+        var dashboardGesture = new OverlayHotKeyGesture(
+            true, false, true, true, OverlayHotKeyKey.F9);
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            dashboardGesture,
+            1000,
+            false);
+
+        Assert.Equal(0, hotKeys.InteractionApplyCount);
+        Assert.Equal(1, hotKeys.VisibilityApplyCount);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_OnlyInteractionGestureChanged_DoesNotApplyDashboardGesture()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations);
+        var hotKeys = new FakeHotKeyController(operations);
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+        var interactionGesture = new OverlayHotKeyGesture(
+            true, false, true, false, OverlayHotKeyKey.F8);
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            interactionGesture,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            1000,
+            false);
+
+        Assert.Equal(1, hotKeys.InteractionApplyCount);
+        Assert.Equal(0, hotKeys.VisibilityApplyCount);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_UnchangedUnregisteredOtherGesture_DoesNotRecoverIt()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations);
+        var hotKeys = new FakeHotKeyController(operations)
+        {
+            InteractionIsRegistered = false
+        };
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            new OverlayHotKeyGesture(true, false, true, true, OverlayHotKeyKey.F9),
+            1000,
+            false);
+
+        Assert.Equal(0, hotKeys.InteractionApplyCount);
+        Assert.False(hotKeys.InteractionIsRegistered);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_OnlyNonHotKeySettingsChanged_DoesNotApplyEitherGesture()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations);
+        var hotKeys = new FakeHotKeyController(operations);
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+
+        await service.ApplyDraftAsync(
+            false,
+            OverlayInteractionMode.Interactive,
+            OverlayHotKeyGesture.Default,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            500,
+            true);
+
+        Assert.Equal(0, hotKeys.InteractionApplyCount);
+        Assert.Equal(0, hotKeys.VisibilityApplyCount);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_BothGesturesChanged_AppliesBoth()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations);
+        var hotKeys = new FakeHotKeyController(operations);
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            new OverlayHotKeyGesture(true, false, true, false, OverlayHotKeyKey.F8),
+            new OverlayHotKeyGesture(true, false, true, true, OverlayHotKeyKey.F9),
+            1000,
+            false);
+
+        Assert.Equal(1, hotKeys.InteractionApplyCount);
+        Assert.Equal(1, hotKeys.VisibilityApplyCount);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_SecondGestureFails_RollsBackOnlyFirstAppliedGesture()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations);
+        var hotKeys = new FakeHotKeyController(operations);
+        hotKeys.InteractionResults.Enqueue(SuccessfulApply);
+        hotKeys.InteractionResults.Enqueue(SuccessfulApply);
+        hotKeys.VisibilityResults.Enqueue(new GlobalHotKeyApplyResult(
+            false, false, true, false, "Dashboard 快捷鍵無法套用。"));
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+
+        await Assert.ThrowsAsync<HotKeyConfigurationException>(() => service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            new OverlayHotKeyGesture(true, false, true, false, OverlayHotKeyKey.F8),
+            new OverlayHotKeyGesture(true, false, true, true, OverlayHotKeyKey.F9),
+            1000,
+            false));
+
+        Assert.Equal(2, hotKeys.InteractionApplyCount);
+        Assert.Equal(1, hotKeys.VisibilityApplyCount);
+        Assert.Equal(OverlayHotKeyGesture.Default, hotKeys.InteractionGesture);
+        Assert.Equal(AppSettings.Defaults, settings.Current);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_PersistenceFails_RollsBackOnlyChangedAppliedGesture()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations) { SaveSucceeds = false };
+        var hotKeys = new FakeHotKeyController(operations);
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+
+        await Assert.ThrowsAsync<HotKeyConfigurationException>(() => service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            new OverlayHotKeyGesture(true, false, true, true, OverlayHotKeyKey.F9),
+            1000,
+            false));
+
+        Assert.Equal(0, hotKeys.InteractionApplyCount);
+        Assert.Equal(2, hotKeys.VisibilityApplyCount);
+        Assert.Equal(OverlayHotKeyGesture.DashboardVisibilityDefault,
+            hotKeys.VisibilityGesture);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_PersistenceAndRollbackFail_ReturnsDegradedMessageAndSynchronizesActualGesture()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations) { SaveSucceeds = false };
+        var hotKeys = new FakeHotKeyController(operations);
+        hotKeys.VisibilityResults.Enqueue(SuccessfulApply);
+        hotKeys.VisibilityResults.Enqueue(new GlobalHotKeyApplyResult(
+            false, false, false, true, "原快捷鍵無法恢復。"));
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+        var dashboardGesture = new OverlayHotKeyGesture(
+            true, false, true, true, OverlayHotKeyKey.F9);
+
+        HotKeyConfigurationException exception =
+            await Assert.ThrowsAsync<HotKeyConfigurationException>(() => service.ApplyDraftAsync(
+                true,
+                OverlayInteractionMode.ClickThrough,
+                OverlayHotKeyGesture.Default,
+                dashboardGesture,
+                1000,
+                false));
+
+        Assert.Equal(
+            "設定無法保存，且部分快捷鍵未能恢復。請使用系統匣控制 Dashboard，並重新開啟設定確認目前狀態。",
+            exception.Message);
+        Assert.Equal(dashboardGesture, hotKeys.VisibilityGesture);
+        Assert.Equal(dashboardGesture, settings.Current.Window.VisibilityHotKey);
+        Assert.Contains("update-settings", operations);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_TransactionalMutationPreservesConcurrentWindowAndModeUpdates()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations)
+        {
+            BeforeReplacement = current => current with
+            {
+                Window = current.Window with
+                {
+                    Left = 444.5,
+                    Top = -25.75,
+                    IsDashboardVisible = false
+                },
+                Overlay = current.Overlay with
+                {
+                    InteractionMode = OverlayInteractionMode.Interactive
+                }
+            }
+        };
+        var hotKeys = new FakeHotKeyController(operations);
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            1000,
+            false);
+
+        Assert.Equal(444.5, settings.Current.Window.Left);
+        Assert.Equal(-25.75, settings.Current.Window.Top);
+        Assert.False(settings.Current.Window.IsDashboardVisible);
+        Assert.Equal(
+            OverlayInteractionMode.Interactive,
+            settings.Current.Overlay.InteractionMode);
+        Assert.Equal(0, hotKeys.InteractionApplyCount);
+        Assert.Equal(0, hotKeys.VisibilityApplyCount);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_UnchangedUnregisteredInteraction_PerformsNoNativeRecoveryRegistration()
+    {
+        var native = new IsolationNativeHotKeyApi();
+        using var hotKeys = new GlobalHotKeyController(native);
+        hotKeys.RegisterAll(new nint(1234));
+        int interactionRegistrationsBeforeSave = native.RegisterCalls.Count(call =>
+            call.Identifier == GlobalHotKeyController.InteractionHotKeyIdentifier);
+        var settings = new FakeSettingsService([]);
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            new OverlayHotKeyGesture(true, false, true, true, OverlayHotKeyKey.F9),
+            1000,
+            false);
+
+        Assert.Equal(interactionRegistrationsBeforeSave,
+            native.RegisterCalls.Count(call =>
+                call.Identifier == GlobalHotKeyController.InteractionHotKeyIdentifier));
+        Assert.DoesNotContain(
+            GlobalHotKeyController.InteractionHotKeyIdentifier,
+            native.UnregisterCalls);
+    }
+
+    private static readonly GlobalHotKeyApplyResult SuccessfulApply =
+        new(true, false, true, false, null);
+
+    private static SettingsApplicationService CreateService(
+        ISettingsService settings,
+        IGlobalHotKeyController hotKeys,
+        MainWindowViewModel mainViewModel) => new(
+            settings,
+            new WindowVisibilityCoordinator(),
+            new FakeInteractionAction(),
+            hotKeys,
+            mainViewModel,
+            new FakeRunAtLoginService());
 
     private static MainWindowViewModel CreateMainViewModel() => new(
         new NoOpMetricsService(),
@@ -316,6 +668,8 @@ public sealed class SettingsApplicationServiceTests
     private sealed class FakeSettingsService(List<string> operations) : ISettingsService
     {
         public AppSettings Current { get; private set; } = AppSettings.Defaults;
+        internal bool SaveSucceeds { get; init; } = true;
+        internal Func<AppSettings, AppSettings>? BeforeReplacement { get; init; }
         internal List<AppSettings> PersistedSettings { get; } = [];
         public string? LastDiagnostic => null;
         public event Action<AppSettings>? Changed;
@@ -327,6 +681,24 @@ public sealed class SettingsApplicationServiceTests
             Current = AppSettingsValidator.Normalize(update(Current));
             Changed?.Invoke(Current);
             return true;
+        }
+        public Task<bool> TryReplaceCurrentAsync(
+            Func<AppSettings, AppSettings> replacement,
+            CancellationToken cancellationToken = default)
+        {
+            operations.Add("save-settings");
+            if (!SaveSucceeds)
+            {
+                return Task.FromResult(false);
+            }
+            if (BeforeReplacement is not null)
+            {
+                Current = AppSettingsValidator.Normalize(BeforeReplacement(Current));
+            }
+            Current = AppSettingsValidator.Normalize(replacement(Current));
+            PersistedSettings.Add(Current);
+            Changed?.Invoke(Current);
+            return Task.FromResult(true);
         }
         public Task FlushAsync(CancellationToken cancellationToken = default)
         {
@@ -343,13 +715,28 @@ public sealed class SettingsApplicationServiceTests
             new(true, false, true, false, null);
         public OverlayHotKeyGesture InteractionGesture { get; private set; } =
             OverlayHotKeyGesture.Default;
+        public OverlayHotKeyGesture VisibilityGesture { get; private set; } =
+            OverlayHotKeyGesture.DashboardVisibilityDefault;
+        internal Queue<GlobalHotKeyApplyResult> InteractionResults { get; } = [];
+        internal Queue<GlobalHotKeyApplyResult> VisibilityResults { get; } = [];
+        internal int InteractionApplyCount { get; private set; }
+        internal int VisibilityApplyCount { get; private set; }
+        internal bool InteractionIsRegistered { get; set; } = true;
+        internal bool VisibilityIsRegistered { get; set; } = true;
         public IReadOnlyList<GlobalHotKeyRegistrationState> Registrations =>
         [
             new(
                 GlobalHotKeyAction.ToggleInteractionMode,
                 GlobalHotKeyController.InteractionHotKeyIdentifier,
                 InteractionGesture.DisplayText,
-                Result.IsSuccess,
+                InteractionIsRegistered,
+                Result.Fault,
+                null),
+            new(
+                GlobalHotKeyAction.ToggleDashboardVisibility,
+                GlobalHotKeyController.VisibilityHotKeyIdentifier,
+                VisibilityGesture.DisplayText,
+                VisibilityIsRegistered,
                 Result.Fault,
                 null)
         ];
@@ -358,11 +745,38 @@ public sealed class SettingsApplicationServiceTests
         public GlobalHotKeyApplyResult ApplyInteractionGesture(OverlayHotKeyGesture gesture)
         {
             operations.Add("apply-hotkey");
-            if (Result.IsSuccess)
+            InteractionApplyCount++;
+            GlobalHotKeyApplyResult result = InteractionResults.TryDequeue(out var queued)
+                ? queued
+                : Result;
+            if (result.IsSuccess)
             {
                 InteractionGesture = gesture;
+                InteractionIsRegistered = true;
             }
-            return Result;
+            else if (result.RequiresSafeRecovery)
+            {
+                InteractionIsRegistered = false;
+            }
+            return result;
+        }
+        public GlobalHotKeyApplyResult ApplyVisibilityGesture(OverlayHotKeyGesture gesture)
+        {
+            operations.Add("apply-visibility-hotkey");
+            VisibilityApplyCount++;
+            GlobalHotKeyApplyResult result = VisibilityResults.TryDequeue(out var queued)
+                ? queued
+                : Result;
+            if (result.IsSuccess)
+            {
+                VisibilityGesture = gesture;
+                VisibilityIsRegistered = true;
+            }
+            else if (result.RequiresSafeRecovery)
+            {
+                VisibilityIsRegistered = false;
+            }
+            return result;
         }
         public bool TryGetAction(int message, nint parameter, out GlobalHotKeyAction action)
         {
@@ -400,6 +814,24 @@ public sealed class SettingsApplicationServiceTests
             State = new(requested, requested, null);
             return Task.FromResult(State);
         }
+    }
+
+    private sealed class IsolationNativeHotKeyApi : INativeGlobalHotKeyApi
+    {
+        internal List<(int Identifier, uint Modifiers, uint VirtualKey)> RegisterCalls { get; } = [];
+        internal List<int> UnregisterCalls { get; } = [];
+
+        public void Register(nint windowHandle, int identifier, uint modifiers, uint virtualKey)
+        {
+            RegisterCalls.Add((identifier, modifiers, virtualKey));
+            if (identifier == GlobalHotKeyController.InteractionHotKeyIdentifier)
+            {
+                throw new IOException("configured interaction registration failure");
+            }
+        }
+
+        public void Unregister(nint windowHandle, int identifier) =>
+            UnregisterCalls.Add(identifier);
     }
 
     private sealed class NoOpMetricsService : ISystemMetricsService

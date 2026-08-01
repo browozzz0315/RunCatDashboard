@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using RunCatDashboard.Tests.Diagnostics;
 using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Windowing;
 
@@ -93,6 +94,8 @@ public sealed class GlobalHotKeyControllerTests
         Assert.Equal(
             [GlobalHotKeyController.InteractionHotKeyIdentifier],
             native.UnregisterCalls);
+        Assert.Equal(1, native.RegisterCalls.Count(call =>
+            call.Identifier == GlobalHotKeyController.VisibilityHotKeyIdentifier));
     }
 
     [Fact]
@@ -202,6 +205,151 @@ public sealed class GlobalHotKeyControllerTests
     }
 
     [Fact]
+    public void ApplyVisibilityGesture_SameRegisteredGesture_IsNoOp()
+    {
+        var native = new FakeNativeGlobalHotKeyApi();
+        var controller = new GlobalHotKeyController(native);
+        controller.RegisterAll(WindowHandle);
+
+        GlobalHotKeyApplyResult result = controller.ApplyVisibilityGesture(
+            OverlayHotKeyGesture.DashboardVisibilityDefault);
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.IsNoOp);
+        Assert.Equal(2, native.RegisterCalls.Count);
+        Assert.Empty(native.UnregisterCalls);
+    }
+
+    [Fact]
+    public void ApplyVisibilityGesture_NewRegistrationSucceeds_DoesNotTouchInteractionRegistration()
+    {
+        var native = new FakeNativeGlobalHotKeyApi();
+        var controller = new GlobalHotKeyController(native);
+        controller.RegisterAll(WindowHandle);
+        var replacement = new OverlayHotKeyGesture(
+            true, false, true, true, OverlayHotKeyKey.F9);
+
+        GlobalHotKeyApplyResult result = controller.ApplyVisibilityGesture(replacement);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(replacement, controller.VisibilityGesture);
+        Assert.Equal(OverlayHotKeyGesture.Default, controller.InteractionGesture);
+        Assert.Equal(
+            [GlobalHotKeyController.VisibilityHotKeyIdentifier],
+            native.UnregisterCalls);
+        Assert.Equal(1, native.RegisterCalls.Count(call =>
+            call.Identifier == GlobalHotKeyController.InteractionHotKeyIdentifier));
+    }
+
+    [Fact]
+    public void ApplyVisibilityGesture_NewRegistrationFails_RollsBackOldGesture()
+    {
+        var native = new FakeNativeGlobalHotKeyApi();
+        native.VisibilityRegisterSequence.Enqueue(null);
+        native.VisibilityRegisterSequence.Enqueue(new Win32Exception(1409));
+        native.VisibilityRegisterSequence.Enqueue(null);
+        var controller = new GlobalHotKeyController(native);
+        controller.RegisterAll(WindowHandle);
+
+        GlobalHotKeyApplyResult result = controller.ApplyVisibilityGesture(
+            new OverlayHotKeyGesture(true, false, true, false, OverlayHotKeyKey.F10));
+
+        Assert.False(result.IsSuccess);
+        Assert.True(result.RollbackSucceeded);
+        Assert.False(result.RequiresSafeRecovery);
+        Assert.Equal(OverlayHotKeyGesture.DashboardVisibilityDefault,
+            controller.VisibilityGesture);
+        Assert.True(controller.Registrations.Single(state =>
+            state.Action == GlobalHotKeyAction.ToggleDashboardVisibility).IsRegistered);
+    }
+
+    [Fact]
+    public void ApplyVisibilityGesture_NewRegistrationAndRollbackFail_LeavesInteractionRegistered()
+    {
+        var native = new FakeNativeGlobalHotKeyApi();
+        native.VisibilityRegisterSequence.Enqueue(null);
+        native.VisibilityRegisterSequence.Enqueue(new Win32Exception(1409));
+        native.VisibilityRegisterSequence.Enqueue(new Win32Exception(5));
+        var controller = new GlobalHotKeyController(native);
+        controller.RegisterAll(WindowHandle);
+
+        GlobalHotKeyApplyResult result = controller.ApplyVisibilityGesture(
+            new OverlayHotKeyGesture(true, false, true, false, OverlayHotKeyKey.F10));
+
+        Assert.False(result.IsSuccess);
+        Assert.False(result.RollbackSucceeded);
+        Assert.True(result.RequiresSafeRecovery);
+        Assert.True(controller.Registrations.Single(state =>
+            state.Action == GlobalHotKeyAction.ToggleInteractionMode).IsRegistered);
+        Assert.DoesNotContain(
+            GlobalHotKeyController.InteractionHotKeyIdentifier,
+            native.UnregisterCalls);
+        Assert.Contains("系統匣", result.Fault);
+    }
+
+    [Fact]
+    public void ApplyVisibilityGesture_RollbackFailure_LogsVisibilityHotKeyIdentifier()
+    {
+        var native = new FakeNativeGlobalHotKeyApi();
+        native.VisibilityRegisterSequence.Enqueue(null);
+        native.VisibilityRegisterSequence.Enqueue(new Win32Exception(1409));
+        native.VisibilityRegisterSequence.Enqueue(new Win32Exception(5));
+        var logger = new RecordingLogger<GlobalHotKeyController>();
+        var controller = new GlobalHotKeyController(native, logger);
+        controller.RegisterAll(WindowHandle);
+
+        controller.ApplyVisibilityGesture(
+            new OverlayHotKeyGesture(true, false, true, false, OverlayHotKeyKey.F10));
+
+        RecordedLog rollback = Assert.Single(
+            logger.Entries,
+            entry => entry.Message.Contains("rollback failed", StringComparison.Ordinal));
+        Assert.Equal(GlobalHotKeyController.VisibilityHotKeyIdentifier,
+            rollback.Properties["HotKeyId"]);
+        Assert.Equal("RollbackHotKey", rollback.Properties["Operation"]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ApplyGesture_DuplicateWithOtherGesture_PerformsNoNativeCalls(bool updateInteraction)
+    {
+        var native = new FakeNativeGlobalHotKeyApi();
+        var controller = new GlobalHotKeyController(native);
+        controller.RegisterAll(WindowHandle);
+        int registerCount = native.RegisterCalls.Count;
+
+        GlobalHotKeyApplyResult result = updateInteraction
+            ? controller.ApplyInteractionGesture(OverlayHotKeyGesture.DashboardVisibilityDefault)
+            : controller.ApplyVisibilityGesture(OverlayHotKeyGesture.Default);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(OverlayHotKeyGesture.DuplicateGestureMessage, result.Fault);
+        Assert.Equal(registerCount, native.RegisterCalls.Count);
+        Assert.Empty(native.UnregisterCalls);
+        Assert.Equal(OverlayHotKeyGesture.Default, controller.InteractionGesture);
+        Assert.Equal(OverlayHotKeyGesture.DashboardVisibilityDefault,
+            controller.VisibilityGesture);
+    }
+
+    [Fact]
+    public void Dispose_WhenBothRegistered_UnregistersBothIdentifiers()
+    {
+        var native = new FakeNativeGlobalHotKeyApi();
+        var controller = new GlobalHotKeyController(native);
+        controller.RegisterAll(WindowHandle);
+
+        controller.Dispose();
+
+        Assert.Equal(
+            [
+                GlobalHotKeyController.InteractionHotKeyIdentifier,
+                GlobalHotKeyController.VisibilityHotKeyIdentifier
+            ],
+            native.UnregisterCalls);
+    }
+
+    [Fact]
     public void RegisterAll_SavedGestureLoadsAtStartup()
     {
         var native = new FakeNativeGlobalHotKeyApi();
@@ -241,6 +389,30 @@ public sealed class GlobalHotKeyControllerTests
         Assert.Contains("目前改用預設", interaction.Fault);
     }
 
+    [Fact]
+    public void RegisterAll_SavedVisibilityFailure_FallsBackWithoutTouchingInteraction()
+    {
+        var native = new FakeNativeGlobalHotKeyApi();
+        native.VisibilityRegisterSequence.Enqueue(new Win32Exception(1409));
+        native.VisibilityRegisterSequence.Enqueue(null);
+        var savedVisibility = new OverlayHotKeyGesture(
+            true, false, true, true, OverlayHotKeyKey.F8);
+        var controller = new GlobalHotKeyController(
+            native,
+            initialVisibilityGesture: savedVisibility);
+
+        IReadOnlyList<GlobalHotKeyRegistrationState> states =
+            controller.RegisterAll(WindowHandle);
+
+        Assert.Equal(OverlayHotKeyGesture.DashboardVisibilityDefault,
+            controller.VisibilityGesture);
+        Assert.Equal(OverlayHotKeyGesture.Default, controller.InteractionGesture);
+        Assert.All(states, state => Assert.True(state.IsRegistered));
+        Assert.DoesNotContain(
+            GlobalHotKeyController.InteractionHotKeyIdentifier,
+            native.UnregisterCalls);
+    }
+
     private sealed class FakeNativeGlobalHotKeyApi : INativeGlobalHotKeyApi
     {
         internal List<(int Identifier, uint Modifiers, uint VirtualKey)> RegisterCalls { get; } = [];
@@ -248,6 +420,7 @@ public sealed class GlobalHotKeyControllerTests
         internal Dictionary<int, Win32Exception> RegisterFailures { get; } = [];
         internal Dictionary<int, Win32Exception> UnregisterFailures { get; } = [];
         internal Queue<Win32Exception?> InteractionRegisterSequence { get; } = [];
+        internal Queue<Win32Exception?> VisibilityRegisterSequence { get; } = [];
 
         public void Register(nint windowHandle, int identifier, uint modifiers, uint virtualKey)
         {
@@ -258,6 +431,15 @@ public sealed class GlobalHotKeyControllerTests
                 if (sequencedFailure is not null)
                 {
                     throw sequencedFailure;
+                }
+                return;
+            }
+            if (identifier == GlobalHotKeyController.VisibilityHotKeyIdentifier &&
+                VisibilityRegisterSequence.TryDequeue(out Win32Exception? visibilityFailure))
+            {
+                if (visibilityFailure is not null)
+                {
+                    throw visibilityFailure;
                 }
                 return;
             }

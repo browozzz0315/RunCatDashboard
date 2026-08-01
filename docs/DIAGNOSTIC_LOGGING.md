@@ -100,5 +100,5 @@ sampling status/failure，以及使用者可理解且需要處理的 Warning／E
 未清理長使用者輸入或不必要的完整使用者資料夾路徑。路徑優先記檔名、相對路徑或資料
 目錄類型。日誌只保留在本機，不上傳。
 
-Logging policy 不持久化。`settings.json` schema version 維持 `1`，不新增 logging
-section或 Logging Settings UI。
+Logging policy 不持久化。Issue #32 將 `settings.json` schema 升為 version 3，
+但不新增 logging section或 Logging Settings UI。
