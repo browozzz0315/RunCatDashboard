@@ -6,8 +6,11 @@
         xmlns:views="clr-namespace:RunCatDashboard.App.Views"
         mc:Ignorable="d"
         Title="RunCatDashboard"
-        Width="430"
-        Height="400"
+        Width="{Binding OverlayWidth, Mode=OneWay}"
+        MinWidth="{Binding OverlayWidth, Mode=OneWay}"
+        MaxWidth="{Binding OverlayWidth, Mode=OneWay}"
+        MaxHeight="{Binding OverlayMaxHeight}"
+        SizeToContent="Height"
         AllowsTransparency="True"
         Background="Transparent"
         ResizeMode="NoResize"
@@ -18,171 +21,161 @@
         WindowStyle="None">
     <Window.Resources>
         <views:RunCatFrameConverter x:Key="RunCatFrameConverter" />
+        <Style x:Key="DiagnosticTextStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource OverlayErrorBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,2,0,0" />
+            <Style.Triggers>
+                <Trigger Property="Text" Value="{x:Null}">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="OverlayCardStyle" TargetType="Border">
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+            <Setter Property="BorderBrush" Value="{DynamicResource OverlayBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        <Style x:Key="PrimaryMetricValueStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource OverlayPrimaryTextBrush}" />
+            <Setter Property="FontSize" Value="17" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
     </Window.Resources>
     <Border Margin="8"
-            Padding="14"
+            Padding="{Binding OverlayContentPadding}"
             Background="{DynamicResource OverlayPanelBackgroundBrush}"
             BorderBrush="{DynamicResource OverlayBorderBrush}"
             BorderThickness="1"
             CornerRadius="10">
-        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+        <ScrollViewer x:Name="OverlayScrollViewer"
+                      HorizontalScrollBarVisibility="Disabled"
                       VerticalScrollBarVisibility="Hidden">
-            <StackPanel x:Name="OverlayContent">
-                    <Grid x:Name="OverlayTopRow"
-                          Margin="0,0,0,8"
-                          Background="Transparent"
-                          Cursor="SizeAll"
-                          MouseLeftButtonDown="OnDragSurfaceMouseLeftButtonDown">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="98" />
-                            <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <Border Width="98"
-                                Height="66"
-                                Background="{DynamicResource OverlayRunCatBackgroundBrush}"
-                                BorderBrush="{DynamicResource OverlayBorderBrush}"
-                                BorderThickness="1"
-                                ClipToBounds="True"
-                                CornerRadius="4">
-                            <Image Width="64"
-                                   Height="64"
-                                   HorizontalAlignment="Center"
-                                   RenderOptions.BitmapScalingMode="NearestNeighbor"
-                                   RenderTransformOrigin="0.5,0.5"
-                                   SnapsToDevicePixels="True"
-                                   Source="{Binding AnimationFrameIndex, Converter={StaticResource RunCatFrameConverter}}"
-                                   Stretch="Uniform"
-                                   VerticalAlignment="Center">
-                                <Image.RenderTransform>
-                                    <ScaleTransform ScaleX="2"
-                                                    ScaleY="2" />
-                                </Image.RenderTransform>
-                            </Image>
-                        </Border>
-                        <StackPanel Grid.Column="2"
-                                    VerticalAlignment="Center">
-                            <TextBlock Foreground="{DynamicResource OverlayErrorBrush}"
-                                       Text="{Binding OverlayErrorMessage}"
-                                       TextWrapping="Wrap" />
-                            <TextBlock Margin="0,2,0,0"
-                                       Foreground="{DynamicResource OverlayErrorBrush}"
-                                       Text="{Binding HotKeyErrorMessage}"
-                                       TextWrapping="Wrap" />
-                            <TextBlock Margin="0,2,0,0"
-                                       Foreground="{DynamicResource OverlayErrorBrush}"
-                                       Text="{Binding TrayErrorMessage}"
-                                       TextWrapping="Wrap" />
-                            <TextBlock Margin="0,2,0,0"
-                                       Foreground="{DynamicResource OverlayErrorBrush}"
-                                       Text="{Binding AnimationErrorMessage}"
-                                       TextWrapping="Wrap" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="4"
-                                    HorizontalAlignment="Right"
-                                    Orientation="Horizontal"
-                                    VerticalAlignment="Center">
-                            <Border Padding="10,4"
-                                    HorizontalAlignment="Right"
-                                    Background="{DynamicResource OverlayModeBackgroundBrush}"
-                                    CornerRadius="14">
-                                <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                                           FontWeight="SemiBold"
-                                           Text="{Binding OverlayModeText}" />
-                            </Border>
-                            <Button Margin="8,0,0,0"
-                                    Padding="10,4"
-                                    HorizontalAlignment="Right"
-                                    Click="OnCloseButtonClick"
-                                    Content="Close"
-                                    Visibility="{Binding IsInteractive, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                        </StackPanel>
-                    </Grid>
+            <StackPanel x:Name="OverlayContent"
+                        Background="Transparent"
+                        Cursor="SizeAll"
+                        MouseLeftButtonDown="OnDragSurfaceMouseLeftButtonDown">
+                <Grid x:Name="CatViewport"
+                      ClipToBounds="True"
+                      Width="{Binding CatViewportWidth}"
+                      Height="{Binding CatViewportHeight}">
+                    <Canvas x:Name="CatAnimationCanvas"
+                            Width="{Binding CatViewportWidth}"
+                            Height="{Binding CatViewportHeight}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Top"
+                            IsHitTestVisible="False">
+                        <Image x:Name="CatImage"
+                               Canvas.Left="{Binding CatRenderOffsetX}"
+                               Canvas.Top="{Binding CatRenderOffsetY}"
+                               Width="{Binding CatRenderSize}"
+                               Height="{Binding CatRenderSize}"
+                               RenderOptions.BitmapScalingMode="NearestNeighbor"
+                               SnapsToDevicePixels="True"
+                               Source="{Binding AnimationFrameIndex, Converter={StaticResource RunCatFrameConverter}}"
+                               Stretch="Uniform" />
+                    </Canvas>
+                    <Border x:Name="CatFloorLine"
+                            Height="1"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Bottom"
+                            Background="{DynamicResource OverlayBorderBrush}"
+                            IsHitTestVisible="False"
+                            Opacity="0.55"
+                            SnapsToDevicePixels="True" />
+                    <Button x:Name="CatCloseButton"
+                            Width="54"
+                            Height="28"
+                            Margin="0,6,6,0"
+                            Padding="10,4"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Top"
+                            Click="OnCloseButtonClick"
+                            Content="Close"
+                            Cursor="Arrow"
+                            Visibility="{Binding IsInteractive, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                </Grid>
 
-                    <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                               FontWeight="SemiBold"
-                               Text="Fullscreen display policy" />
-                    <ComboBox Margin="0,5,0,0"
-                              ItemsSource="{Binding DisplayPolicies}"
-                              SelectedItem="{Binding RequestedDisplayPolicy, Mode=TwoWay}" />
-                    <TextBlock Margin="0,2,0,8"
-                               Foreground="{DynamicResource OverlayErrorBrush}"
-                               Text="{Binding DisplayPolicyFault}"
-                               TextWrapping="Wrap" />
-
-                    <Separator Margin="0,0,0,8" />
-
-                    <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                               FontSize="16"
-                               FontWeight="SemiBold"
-                               Text="System Metrics Dashboard" />
-
-                    <Grid Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="16" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-
-                        <TextBlock Foreground="{DynamicResource OverlaySecondaryTextBrush}" Text="CPU" />
-                        <TextBlock Grid.Column="2"
-                                   Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                                   FontWeight="SemiBold"
-                                   Text="{Binding CpuUsageText}" />
-
-                        <TextBlock Grid.Row="1" Margin="0,5,0,0"
-                                   Foreground="{DynamicResource OverlaySecondaryTextBrush}"
-                                   Text="Memory" />
-                        <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,5,0,0"
-                                   Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                                   FontWeight="SemiBold"
-                                   Text="{Binding MemoryUsageText}" />
-
-                        <TextBlock Grid.Row="2" Margin="0,5,0,0"
-                                   Foreground="{DynamicResource OverlaySecondaryTextBrush}"
-                                   Text="Used / Total Memory" />
-                        <TextBlock Grid.Row="2" Grid.Column="2" Margin="0,5,0,0"
-                                   Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                                   Text="{Binding UsedAndTotalMemoryText}" />
-
-                        <TextBlock Grid.Row="3" Margin="0,5,0,0"
-                                   Foreground="{DynamicResource OverlaySecondaryTextBrush}"
-                                   Text="Last updated" />
-                        <TextBlock Grid.Row="3" Grid.Column="2" Margin="0,5,0,0"
-                                   Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                                   Text="{Binding LastUpdatedText}" />
-
-                        <TextBlock Grid.Row="4" Margin="0,5,0,0"
-                                   Foreground="{DynamicResource OverlaySecondaryTextBrush}"
-                                   Text="Sampling status" />
-                        <StackPanel Grid.Row="4" Grid.Column="2" Margin="0,5,0,0">
-                            <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                                       Text="{Binding SamplingStatus}" />
-                            <TextBlock Foreground="{DynamicResource OverlayErrorBrush}"
-                                       Text="{Binding ErrorMessage}"
-                                       TextWrapping="Wrap" />
-                        </StackPanel>
-                    </Grid>
-
-                    <StackPanel Margin="0,10,0,0">
-                        <TextBlock Margin="0,0,0,5"
-                                   Foreground="{DynamicResource OverlayPrimaryTextBrush}"
-                                   FontWeight="SemiBold"
-                                   Text="Recent CPU history (newest to oldest)" />
-                        <Border Padding="8"
+                <StackPanel x:Name="DashboardContent"
+                            Visibility="{Binding ShowDashboardContent, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <StackPanel x:Name="PrimaryMetrics" Margin="0,8,0,0">
+                        <Border Style="{StaticResource OverlayCardStyle}"
                                 Background="{DynamicResource OverlayHistoryBackgroundBrush}"
-                                BorderBrush="{DynamicResource OverlayBorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="4">
+                                Visibility="{Binding ShowCpu, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Foreground="{DynamicResource OverlaySecondaryTextBrush}"
+                                           FontWeight="SemiBold"
+                                           Text="CPU" />
+                                <TextBlock Grid.Column="1"
+                                           Style="{StaticResource PrimaryMetricValueStyle}"
+                                           Text="{Binding CpuUsageText}" />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource OverlayCardStyle}"
+                                Background="{DynamicResource OverlayHistoryBackgroundBrush}"
+                                Visibility="{Binding ShowMemory, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Foreground="{DynamicResource OverlaySecondaryTextBrush}"
+                                           FontWeight="SemiBold"
+                                           Text="Memory" />
+                                <TextBlock Grid.Column="1"
+                                           Style="{StaticResource PrimaryMetricValueStyle}"
+                                           Text="{Binding MemoryUsageText}" />
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+
+                    <Border Style="{StaticResource OverlayCardStyle}"
+                            Visibility="{Binding ShowUsedAndTotalMemory, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Foreground="{DynamicResource OverlaySecondaryTextBrush}"
+                                       Text="Used / Total Memory" />
+                            <TextBlock Margin="0,3,0,0"
+                                       Foreground="{DynamicResource OverlayPrimaryTextBrush}"
+                                       Text="{Binding UsedAndTotalMemoryText}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource OverlayCardStyle}"
+                            Visibility="{Binding ShowLastUpdated, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Foreground="{DynamicResource OverlaySecondaryTextBrush}"
+                                       Text="Last updated" />
+                            <TextBlock Margin="0,3,0,0"
+                                       Foreground="{DynamicResource OverlayPrimaryTextBrush}"
+                                       Text="{Binding LastUpdatedText}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource OverlayCardStyle}"
+                            Visibility="{Binding ShowSamplingStatus, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Foreground="{DynamicResource OverlaySecondaryTextBrush}"
+                                       Text="Sampling status" />
+                            <TextBlock Margin="0,3,0,0"
+                                       Foreground="{DynamicResource OverlayPrimaryTextBrush}"
+                                       Text="{Binding SamplingStatus}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource OverlayCardStyle}"
+                            Background="{DynamicResource OverlayHistoryBackgroundBrush}"
+                            Visibility="{Binding ShowRecentCpuHistory, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Margin="0,0,0,5"
+                                       Foreground="{DynamicResource OverlayPrimaryTextBrush}"
+                                       FontWeight="SemiBold"
+                                       Text="Recent CPU history (newest to oldest)" />
                             <ItemsControl ItemsSource="{Binding CpuHistoryNewestFirst}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -197,8 +190,47 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                        </Border>
-                    </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Padding="10,5"
+                            Margin="0,0,0,6"
+                            HorizontalAlignment="Left"
+                            Background="{DynamicResource OverlayModeBackgroundBrush}"
+                            CornerRadius="12"
+                            Visibility="{Binding ShowInteractionMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock Foreground="{DynamicResource OverlayPrimaryTextBrush}"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding OverlayModeText}" />
+                    </Border>
+
+                    <TextBlock Margin="0,0,0,6"
+                               Foreground="{DynamicResource OverlaySecondaryTextBrush}"
+                               Text="{Binding HotKeyHintsText}"
+                               TextWrapping="Wrap"
+                               Visibility="{Binding ShowHotKeyHints, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                    <Border x:Name="DiagnosticsPanel"
+                            Padding="8"
+                            Background="#402F1F1F"
+                            BorderBrush="{DynamicResource OverlayErrorBrush}"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Visibility="{Binding HasDiagnostics, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Foreground="{DynamicResource OverlayErrorBrush}"
+                                       FontWeight="SemiBold"
+                                       Text="Diagnostics" />
+                            <TextBlock Style="{StaticResource DiagnosticTextStyle}" Text="{Binding OverlayErrorMessage}" />
+                            <TextBlock Style="{StaticResource DiagnosticTextStyle}" Text="{Binding HotKeyErrorMessage}" />
+                            <TextBlock Style="{StaticResource DiagnosticTextStyle}" Text="{Binding TrayErrorMessage}" />
+                            <TextBlock Style="{StaticResource DiagnosticTextStyle}" Text="{Binding AnimationErrorMessage}" />
+                            <TextBlock Style="{StaticResource DiagnosticTextStyle}" Text="{Binding DisplayPolicyFault}" />
+                            <TextBlock Style="{StaticResource DiagnosticTextStyle}" Text="{Binding PlacementErrorMessage}" />
+                            <TextBlock Style="{StaticResource DiagnosticTextStyle}" Text="{Binding ErrorMessage}" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
             </StackPanel>
         </ScrollViewer>
     </Border>

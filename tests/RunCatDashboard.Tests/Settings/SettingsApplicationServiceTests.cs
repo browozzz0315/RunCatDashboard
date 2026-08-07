@@ -24,7 +24,8 @@ public sealed class SettingsApplicationServiceTests
             new FakeInteractionAction(),
             hotKeys,
             mainViewModel,
-            new FakeRunAtLoginService());
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher());
         var gesture = new OverlayHotKeyGesture(
             true, false, true, true, OverlayHotKeyKey.F9);
 
@@ -60,7 +61,8 @@ public sealed class SettingsApplicationServiceTests
                 new FakeInteractionAction(),
                 hotKeys,
                 mainViewModel,
-                new FakeRunAtLoginService());
+                new FakeRunAtLoginService(),
+                new ImmediateDispatcher());
             var gesture = new OverlayHotKeyGesture(
                 false, true, true, true, OverlayHotKeyKey.F11);
 
@@ -108,7 +110,8 @@ public sealed class SettingsApplicationServiceTests
             interaction,
             hotKeys,
             mainViewModel,
-            new FakeRunAtLoginService());
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher());
         var gesture = new OverlayHotKeyGesture(
             true, false, true, false, OverlayHotKeyKey.F9);
 
@@ -150,7 +153,8 @@ public sealed class SettingsApplicationServiceTests
             interaction,
             hotKeys,
             mainViewModel,
-            new FakeRunAtLoginService());
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher());
 
         HotKeyConfigurationException exception = await Assert.ThrowsAsync<HotKeyConfigurationException>(
             () => service.ApplyDraftAsync(
@@ -180,7 +184,8 @@ public sealed class SettingsApplicationServiceTests
             new FakeInteractionAction(),
             hotKeys,
             mainViewModel,
-            new FakeRunAtLoginService());
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher());
         var gesture = new OverlayHotKeyGesture(
             true, true, true, false, OverlayHotKeyKey.D);
 
@@ -211,7 +216,8 @@ public sealed class SettingsApplicationServiceTests
             new FakeInteractionAction(),
             new FakeHotKeyController(operations),
             mainViewModel,
-            new FakeRunAtLoginService());
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher());
         var viewModel = new SettingsWindowViewModel(service)
         {
             HotKeyKey = OverlayHotKeyKey.D
@@ -243,7 +249,8 @@ public sealed class SettingsApplicationServiceTests
             new FakeInteractionAction(),
             new FakeHotKeyController(operations),
             mainViewModel,
-            new FakeRunAtLoginService());
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher());
         var viewModel = new SettingsWindowViewModel(service)
         {
             HotKeyControl = false,
@@ -297,7 +304,8 @@ public sealed class SettingsApplicationServiceTests
             interaction,
             hotKeys,
             mainViewModel,
-            new FakeRunAtLoginService());
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher());
 
         await Assert.ThrowsAsync<HotKeyConfigurationException>(() =>
             service.ApplyDraftAsync(
@@ -326,7 +334,8 @@ public sealed class SettingsApplicationServiceTests
             new FakeInteractionAction(),
             hotKeys,
             mainViewModel,
-            new FakeRunAtLoginService());
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher());
         var visibilityGesture = new OverlayHotKeyGesture(
             true, false, true, true, OverlayHotKeyKey.F9);
 
@@ -360,7 +369,8 @@ public sealed class SettingsApplicationServiceTests
             interaction,
             hotKeys,
             mainViewModel,
-            new FakeRunAtLoginService());
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher());
         var visibilityGesture = new OverlayHotKeyGesture(
             true, false, true, true, OverlayHotKeyKey.F9);
 
@@ -619,6 +629,104 @@ public sealed class SettingsApplicationServiceTests
     }
 
     [Fact]
+    public async Task ApplyDraft_PresentationSaveSucceeds_AppliesWithoutHotKeyReplacement()
+    {
+        var settings = new FakeSettingsService([]);
+        var hotKeys = new FakeHotKeyController([]);
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+        OverlayFieldSettings fields = OverlayFieldSettings.ForMode(OverlaySizeMode.Expanded) with
+        {
+            ShowCpu = false,
+            ShowHotKeyHints = false
+        };
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            1000,
+            false,
+            OverlaySizeMode.Expanded,
+            fields,
+            OverlayDisplayPolicy.NeverTopmost);
+
+        Assert.Equal(OverlaySizeMode.Expanded, settings.Current.Overlay.SizeMode);
+        Assert.Equal(fields, settings.Current.Overlay.Fields);
+        Assert.Equal(OverlaySizeMode.Expanded, mainViewModel.SizeMode);
+        Assert.Equal(fields, mainViewModel.OverlayFields);
+        Assert.Equal(OverlayDisplayPolicy.NeverTopmost, mainViewModel.RequestedDisplayPolicy);
+        Assert.Equal(0, hotKeys.InteractionApplyCount);
+        Assert.Equal(0, hotKeys.VisibilityApplyCount);
+        Assert.False(mainViewModel.IsSampling);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_PresentationPersistenceFails_DoesNotApplyPresentation()
+    {
+        var settings = new FakeSettingsService([]) { SaveSucceeds = false };
+        var hotKeys = new FakeHotKeyController([]);
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+
+        await Assert.ThrowsAsync<HotKeyConfigurationException>(() => service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            1000,
+            false,
+            OverlaySizeMode.Compact,
+            OverlayFieldSettings.ForMode(OverlaySizeMode.Compact)));
+
+        Assert.Equal(OverlaySizeMode.Standard, settings.Current.Overlay.SizeMode);
+        Assert.Equal(OverlaySizeMode.Standard, mainViewModel.SizeMode);
+        Assert.Equal(0, hotKeys.InteractionApplyCount);
+        Assert.Equal(0, hotKeys.VisibilityApplyCount);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_ConcurrentPresentationAndPositionWinOverStaleDraft()
+    {
+        OverlayFieldSettings concurrentFields =
+            OverlayFieldSettings.ForMode(OverlaySizeMode.Expanded) with { ShowCpu = false };
+        var settings = new FakeSettingsService([])
+        {
+            BeforeReplacement = current => current with
+            {
+                Window = current.Window with { Left = -300, Top = 45 },
+                Overlay = current.Overlay with
+                {
+                    InteractionMode = OverlayInteractionMode.Interactive,
+                    SizeMode = OverlaySizeMode.Expanded,
+                    Fields = concurrentFields
+                }
+            }
+        };
+        var hotKeys = new FakeHotKeyController([]);
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, hotKeys, mainViewModel);
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            1000,
+            false,
+            OverlaySizeMode.Compact,
+            OverlayFieldSettings.ForMode(OverlaySizeMode.Compact));
+
+        Assert.Equal(-300, settings.Current.Window.Left);
+        Assert.Equal(45, settings.Current.Window.Top);
+        Assert.Equal(OverlayInteractionMode.Interactive, settings.Current.Overlay.InteractionMode);
+        Assert.Equal(OverlaySizeMode.Expanded, settings.Current.Overlay.SizeMode);
+        Assert.Equal(concurrentFields, settings.Current.Overlay.Fields);
+        Assert.Equal(OverlaySizeMode.Expanded, mainViewModel.SizeMode);
+    }
+
+    [Fact]
     public async Task ApplyDraft_UnchangedUnregisteredInteraction_PerformsNoNativeRecoveryRegistration()
     {
         var native = new IsolationNativeHotKeyApi();
@@ -658,7 +766,8 @@ public sealed class SettingsApplicationServiceTests
             new FakeInteractionAction(),
             hotKeys,
             mainViewModel,
-            new FakeRunAtLoginService());
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher());
 
     private static MainWindowViewModel CreateMainViewModel() => new(
         new NoOpMetricsService(),

@@ -1,4 +1,4 @@
-﻿# Development workflow
+# Development workflow
 
 ## Open project
 
@@ -71,8 +71,13 @@ repeated exit/relaunch checks.
 Settings tests use injectable file and Registry adapters and never modify the
 real HKCU Run key. Before release, follow
 [`SETTINGS_AND_STARTUP.md`](SETTINGS_AND_STARTUP.md): inspect schema v1 under
-LocalAppData, malformed/unsupported backups, hidden startup without Show/Hide
+LocalAppData and its schema v4 migration, malformed/unsupported backups, hidden startup without Show/Hide
 flicker, multi-monitor placement, runtime sampling changes, Settings Save/Cancel,
 quoted executable reconciliation, and explicit shutdown flush. Debug output may
 be locked by a running app; do not terminate a user process, and verify with
 `dotnet build -c Release` plus `dotnet test -c Release` instead.
+
+Overlay presentation changes also require manual verification of all four size
+modes, field combinations, content-driven Height, small-work-area scrolling,
+post-layout clamp, CatOnly Interactive controls and ClickThrough hotkey／tray
+recovery. Unit tests do not prove WPF layout or DPI behavior.

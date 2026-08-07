@@ -8,6 +8,7 @@ using RunCatDashboard.App.Collections;
 using RunCatDashboard.App.Diagnostics;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
+using RunCatDashboard.App.Settings;
 using RunCatDashboard.App.Windowing;
 
 namespace RunCatDashboard.App.ViewModels;
@@ -100,6 +101,19 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     [ObservableProperty]
     private string? _displayPolicyFault;
 
+    [ObservableProperty]
+    private string? _placementErrorMessage;
+
+    [ObservableProperty]
+    private OverlaySizeMode _sizeMode = OverlaySizeMode.Standard;
+
+    [ObservableProperty]
+    private OverlayFieldSettings _overlayFields =
+        OverlayFieldSettings.ForMode(OverlaySizeMode.Standard);
+
+    [ObservableProperty]
+    private string _hotKeyHintsText = string.Empty;
+
     public event Action<OverlayDisplayPolicy>? DisplayPolicyRequested;
 
     public IReadOnlyList<OverlayDisplayPolicy> DisplayPolicies { get; } =
@@ -116,6 +130,39 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
     public IReadOnlyList<SystemMetricsSnapshot> CpuHistoryNewestFirst =>
         _cpuHistoryNewestFirst;
+
+    public bool IsCatOnly => SizeMode == OverlaySizeMode.CatOnly;
+    public bool ShowDashboardContent => !IsCatOnly;
+    public bool ShowCpu => ShowDashboardContent && OverlayFields.ShowCpu;
+    public bool ShowMemory => ShowDashboardContent && OverlayFields.ShowMemory;
+    public bool ShowUsedAndTotalMemory =>
+        ShowMemory && OverlayFields.ShowUsedAndTotalMemory;
+    public bool ShowLastUpdated => ShowDashboardContent && OverlayFields.ShowLastUpdated;
+    public bool ShowSamplingStatus => ShowDashboardContent && OverlayFields.ShowSamplingStatus;
+    public bool ShowRecentCpuHistory =>
+        ShowDashboardContent && OverlayFields.ShowRecentCpuHistory;
+    public bool ShowInteractionMode =>
+        ShowDashboardContent && OverlayFields.ShowInteractionMode;
+    public bool ShowHotKeyHints =>
+        ShowDashboardContent && OverlayFields.ShowHotKeyHints &&
+        !string.IsNullOrWhiteSpace(HotKeyHintsText);
+    public bool HasDiagnostics =>
+        ShowDashboardContent &&
+        (OverlayErrorMessage is not null ||
+         HotKeyErrorMessage is not null ||
+         TrayErrorMessage is not null ||
+         AnimationErrorMessage is not null ||
+         DisplayPolicyFault is not null ||
+         PlacementErrorMessage is not null ||
+         ErrorMessage is not null);
+    public double OverlayWidth => OverlaySizeProfiles.Get(SizeMode).Width;
+    public double CatViewportWidth => OverlaySizeProfiles.Get(SizeMode).CatViewportWidth;
+    public double CatViewportHeight => OverlaySizeProfiles.Get(SizeMode).CatViewportHeight;
+    public double CatRenderSize => OverlaySizeProfiles.Get(SizeMode).CatRenderSize;
+    public double CatRenderOffsetX => OverlaySizeProfiles.Get(SizeMode).CatRenderOffsetX;
+    public double CatRenderOffsetY => OverlaySizeProfiles.Get(SizeMode).CatRenderOffsetY;
+    public double OverlayContentPadding => OverlaySizeProfiles.Get(SizeMode).ContentPadding;
+    public double OverlayMaxHeight => OverlaySizeProfiles.Get(SizeMode).MaxHeight;
 
     public MainWindowViewModel(
         ISystemMetricsService systemMetricsService,
@@ -175,6 +222,22 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
             : "互動模式套用失敗，已保留目前可用狀態。");
     }
 
+    internal void ApplyOverlayPresentation(
+        OverlaySizeMode mode,
+        OverlayFieldSettings fields)
+    {
+        ArgumentNullException.ThrowIfNull(fields);
+        if (!AppSettingsValidator.TryValidatePresentation(mode, fields, out string? error))
+        {
+            throw new ArgumentException(error, nameof(fields));
+        }
+
+        SizeMode = mode;
+        OverlayFields = mode == OverlaySizeMode.CatOnly
+            ? OverlayFieldSettings.ForMode(OverlaySizeMode.CatOnly)
+            : fields;
+    }
+
     internal void ReportOverlayError(string message)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
@@ -195,11 +258,26 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         {
             HotKeyErrorMessage = null;
         }
+        HotKeyHintsText = string.Join(
+            "  •  ",
+            registrations.Select(registration => registration.Action switch
+            {
+                GlobalHotKeyAction.ToggleInteractionMode =>
+                    $"切換互動模式：{registration.GestureText}",
+                GlobalHotKeyAction.ToggleDashboardVisibility =>
+                    $"顯示／隱藏：{registration.GestureText}",
+                _ => registration.GestureText
+            }));
     }
 
     internal void ReportTrayError(string? message)
     {
         TrayErrorMessage = message;
+    }
+
+    internal void ReportPlacementError(string? message)
+    {
+        PlacementErrorMessage = message;
     }
 
     internal void ApplyDisplayPolicyState(OverlayDisplayPolicyState state)
@@ -551,6 +629,57 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     partial void OnOverlayErrorMessageChanged(string? value)
     {
         OnPropertyChanged(nameof(OverlayModeText));
+        OnPropertyChanged(nameof(HasDiagnostics));
+    }
+
+    partial void OnHotKeyErrorMessageChanged(string? value) =>
+        OnPropertyChanged(nameof(HasDiagnostics));
+
+    partial void OnTrayErrorMessageChanged(string? value) =>
+        OnPropertyChanged(nameof(HasDiagnostics));
+
+    partial void OnAnimationErrorMessageChanged(string? value) =>
+        OnPropertyChanged(nameof(HasDiagnostics));
+
+    partial void OnDisplayPolicyFaultChanged(string? value) =>
+        OnPropertyChanged(nameof(HasDiagnostics));
+
+    partial void OnPlacementErrorMessageChanged(string? value) =>
+        OnPropertyChanged(nameof(HasDiagnostics));
+
+    partial void OnErrorMessageChanged(string? value) =>
+        OnPropertyChanged(nameof(HasDiagnostics));
+
+    partial void OnHotKeyHintsTextChanged(string value) =>
+        OnPropertyChanged(nameof(ShowHotKeyHints));
+
+    partial void OnSizeModeChanged(OverlaySizeMode value) =>
+        NotifyPresentationPropertiesChanged();
+
+    partial void OnOverlayFieldsChanged(OverlayFieldSettings value) =>
+        NotifyPresentationPropertiesChanged();
+
+    private void NotifyPresentationPropertiesChanged()
+    {
+        OnPropertyChanged(nameof(IsCatOnly));
+        OnPropertyChanged(nameof(ShowDashboardContent));
+        OnPropertyChanged(nameof(ShowCpu));
+        OnPropertyChanged(nameof(ShowMemory));
+        OnPropertyChanged(nameof(ShowUsedAndTotalMemory));
+        OnPropertyChanged(nameof(ShowLastUpdated));
+        OnPropertyChanged(nameof(ShowSamplingStatus));
+        OnPropertyChanged(nameof(ShowRecentCpuHistory));
+        OnPropertyChanged(nameof(ShowInteractionMode));
+        OnPropertyChanged(nameof(ShowHotKeyHints));
+        OnPropertyChanged(nameof(HasDiagnostics));
+        OnPropertyChanged(nameof(OverlayWidth));
+        OnPropertyChanged(nameof(CatViewportWidth));
+        OnPropertyChanged(nameof(CatViewportHeight));
+        OnPropertyChanged(nameof(CatRenderSize));
+        OnPropertyChanged(nameof(CatRenderOffsetX));
+        OnPropertyChanged(nameof(CatRenderOffsetY));
+        OnPropertyChanged(nameof(OverlayContentPadding));
+        OnPropertyChanged(nameof(OverlayMaxHeight));
     }
 
     partial void OnRequestedDisplayPolicyChanged(OverlayDisplayPolicy value)

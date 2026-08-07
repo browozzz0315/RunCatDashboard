@@ -181,9 +181,13 @@ public partial class App : System.Windows.Application
             .SetUserRequestedVisibility(initial.Window.IsDashboardVisible);
         _serviceProvider.GetRequiredService<IOverlayModeCoordinator>()
             .TrySetMode(initial.Overlay.InteractionMode);
-        _serviceProvider.GetRequiredService<MainWindowViewModel>()
-            .UpdateSamplingInterval(TimeSpan.FromMilliseconds(
-                initial.Metrics.SamplingIntervalMilliseconds));
+        MainWindowViewModel mainViewModel =
+            _serviceProvider.GetRequiredService<MainWindowViewModel>();
+        mainViewModel.UpdateSamplingInterval(TimeSpan.FromMilliseconds(
+            initial.Metrics.SamplingIntervalMilliseconds));
+        mainViewModel.ApplyOverlayPresentation(
+            initial.Overlay.SizeMode,
+            initial.Overlay.Fields ?? OverlayFieldSettings.ForMode(initial.Overlay.SizeMode));
 
         var mainWindow = _serviceProvider.GetRequiredService<MainWindow>();
         MainWindow = mainWindow;
@@ -303,7 +307,8 @@ public partial class App : System.Windows.Application
                 provider.GetRequiredService<IInteractionModeToggleAction>(),
                 provider.GetRequiredService<IGlobalHotKeyController>(),
                 provider.GetRequiredService<MainWindowViewModel>(),
-                provider.GetRequiredService<IRunAtLoginService>()));
+                provider.GetRequiredService<IRunAtLoginService>(),
+                provider.GetRequiredService<IUiDispatcher>()));
         services.AddTransient<SettingsWindowViewModel>();
         services.AddTransient<SettingsWindow>();
         services.AddSingleton<ISettingsWindowService>(provider =>

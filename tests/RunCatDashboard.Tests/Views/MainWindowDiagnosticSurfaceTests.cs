@@ -7,81 +7,159 @@ namespace RunCatDashboard.Tests.Views;
 public sealed class MainWindowDiagnosticSurfaceTests
 {
     [Fact]
-    public async Task Xaml_KeepsCompactInteractionBadgeAndFormalUserInformationOnly()
+    public async Task Xaml_UsesContentSizedProfilesAndCompleteFieldVisibilityContainers()
     {
-        string xamlPath = Path.Combine(
+        string xaml = await File.ReadAllTextAsync(GetMainWindowPath("MainWindow.xaml"));
+        XDocument document = XDocument.Parse(xaml);
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        XElement window = document.Root!;
+
+        const string overlayWidthBinding = "{Binding OverlayWidth, Mode=OneWay}";
+        Assert.Equal(overlayWidthBinding, (string?)window.Attribute("Width"));
+        Assert.Equal(overlayWidthBinding, (string?)window.Attribute("MinWidth"));
+        Assert.Equal(overlayWidthBinding, (string?)window.Attribute("MaxWidth"));
+        Assert.Equal("{Binding OverlayMaxHeight}", (string?)window.Attribute("MaxHeight"));
+        Assert.Equal("Height", (string?)window.Attribute("SizeToContent"));
+        Assert.Null(window.Attribute("Height"));
+
+        XElement scrollViewer = Assert.Single(
+            document.Descendants(presentation + "ScrollViewer"));
+        Assert.Equal("Disabled",
+            (string?)scrollViewer.Attribute("HorizontalScrollBarVisibility"));
+        Assert.Equal("Hidden",
+            (string?)scrollViewer.Attribute("VerticalScrollBarVisibility"));
+
+        XElement content = Assert.Single(document.Descendants(presentation + "StackPanel"),
+            element => (string?)element.Attribute(x + "Name") == "OverlayContent");
+        XElement catViewport = Assert.Single(content.Elements(),
+            element => (string?)element.Attribute(x + "Name") == "CatViewport");
+        Assert.Equal("True", (string?)catViewport.Attribute("ClipToBounds"));
+        Assert.Equal("{Binding CatViewportWidth}", (string?)catViewport.Attribute("Width"));
+        Assert.Equal("{Binding CatViewportHeight}", (string?)catViewport.Attribute("Height"));
+        XElement catImage = Assert.Single(catViewport.Descendants(presentation + "Image"));
+        XElement animationCanvas = Assert.IsType<XElement>(catImage.Parent);
+        Assert.Equal(presentation + "Canvas", animationCanvas.Name);
+        Assert.Equal("CatAnimationCanvas", (string?)animationCanvas.Attribute(x + "Name"));
+        Assert.Equal("{Binding CatViewportWidth}", (string?)animationCanvas.Attribute("Width"));
+        Assert.Equal("{Binding CatViewportHeight}", (string?)animationCanvas.Attribute("Height"));
+        Assert.Equal("{Binding CatRenderSize}", (string?)catImage.Attribute("Width"));
+        Assert.Equal("{Binding CatRenderSize}", (string?)catImage.Attribute("Height"));
+        Assert.Equal("{Binding CatRenderOffsetX}", (string?)catImage.Attribute("Canvas.Left"));
+        Assert.Equal("{Binding CatRenderOffsetY}", (string?)catImage.Attribute("Canvas.Top"));
+        Assert.Equal("Uniform", (string?)catImage.Attribute("Stretch"));
+        Assert.Equal("NearestNeighbor",
+            (string?)catImage.Attribute("RenderOptions.BitmapScalingMode"));
+        Assert.Empty(animationCanvas.Descendants(presentation + "DataTrigger"));
+
+        XElement catFloorLine = Assert.Single(catViewport.Elements(presentation + "Border"));
+        Assert.Equal("CatFloorLine", (string?)catFloorLine.Attribute(x + "Name"));
+        Assert.Equal("1", (string?)catFloorLine.Attribute("Height"));
+        Assert.Equal("Bottom", (string?)catFloorLine.Attribute("VerticalAlignment"));
+        Assert.Equal("0.55", (string?)catFloorLine.Attribute("Opacity"));
+        Assert.Null(catFloorLine.Attribute("BorderBrush"));
+        Assert.Null(catFloorLine.Attribute("BorderThickness"));
+        Assert.Contains(catFloorLine, animationCanvas.ElementsAfterSelf());
+        Assert.DoesNotContain("ScaleTransform", xaml);
+        Assert.DoesNotContain("UniformToFill", xaml);
+        Assert.DoesNotContain("Width=\"98\"", xaml);
+        Assert.DoesNotContain("Height=\"66\"", xaml);
+
+        string[] visibilityProperties =
+        [
+            "ShowDashboardContent",
+            "ShowCpu",
+            "ShowMemory",
+            "ShowUsedAndTotalMemory",
+            "ShowLastUpdated",
+            "ShowSamplingStatus",
+            "ShowRecentCpuHistory",
+            "ShowInteractionMode",
+            "ShowHotKeyHints",
+            "HasDiagnostics"
+        ];
+        foreach (string property in visibilityProperties)
+        {
+            Assert.Contains($"Visibility=\"{{Binding {property},", xaml);
+            Assert.NotNull(typeof(MainWindowViewModel).GetProperty(property));
+        }
+
+        Assert.Contains("Text=\"{Binding HotKeyHintsText}\"", xaml);
+        Assert.DoesNotContain("Ctrl + Alt + Shift + R", xaml);
+        Assert.DoesNotContain("Ctrl + Alt + Shift + D", xaml);
+        Assert.DoesNotContain("Fullscreen display policy", xaml);
+        Assert.DoesNotContain("ItemsSource=\"{Binding DisplayPolicies}\"", xaml);
+        Assert.Contains("x:Name=\"DiagnosticsPanel\"", xaml);
+        Assert.Contains("Text=\"{Binding PlacementErrorMessage}\"", xaml);
+        Assert.Contains("Text=\"{Binding ErrorMessage}\"", xaml);
+        Assert.Contains("Text=\"{Binding SamplingStatus}\"", xaml);
+
+        XElement primaryValueStyle = Assert.Single(
+            document.Descendants(presentation + "Style"),
+            style => (string?)style.Attribute(x + "Key") == "PrimaryMetricValueStyle");
+        XElement fontSizeSetter = Assert.Single(
+            primaryValueStyle.Elements(presentation + "Setter"),
+            setter => (string?)setter.Attribute("Property") == "FontSize");
+        Assert.Equal("17", (string?)fontSizeSetter.Attribute("Value"));
+        Assert.DoesNotContain("FontSize=\"20\"", xaml);
+    }
+
+    [Fact]
+    public async Task CodeBehind_SetsDataContextBeforeInitializeComponent()
+    {
+        string code = await File.ReadAllTextAsync(GetMainWindowPath("MainWindow.xaml.cs"));
+
+        int dataContextAssignment = code.IndexOf(
+            "DataContext = viewModel;",
+            StringComparison.Ordinal);
+        int initializeComponent = code.IndexOf(
+            "InitializeComponent();",
+            StringComparison.Ordinal);
+
+        Assert.True(dataContextAssignment >= 0);
+        Assert.True(initializeComponent > dataContextAssignment);
+        Assert.Equal(dataContextAssignment, code.LastIndexOf(
+            "DataContext = viewModel;",
+            StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CodeBehind_SizeChangedDefersClampUntilNewActualSizeIsAvailable()
+    {
+        string code = await File.ReadAllTextAsync(GetMainWindowPath("MainWindow.xaml.cs"));
+
+        Assert.Contains("SizeChanged += OnOverlaySizeChanged", code);
+        Assert.Contains("DispatcherPriority.Loaded", code);
+        Assert.Contains("TryClampToCurrentWorkArea();", code);
+        Assert.Contains("ActualWidth > 0 ? ActualWidth : Width", code);
+        Assert.Contains("ActualHeight > 0 ? ActualHeight : Height", code);
+        Assert.Contains("!HasFiniteWindowSize()", code);
+        Assert.Contains("TryCompleteInitialPlacement", code);
+        Assert.Contains("ReportPlacementError(null)", code);
+    }
+
+    [Fact]
+    public async Task FullscreenPolicyControl_LivesOnlyInSettingsWindow()
+    {
+        string mainXaml = await File.ReadAllTextAsync(GetMainWindowPath("MainWindow.xaml"));
+        string settingsXaml = await File.ReadAllTextAsync(Path.Combine(
             FindRepositoryRoot(),
             "src",
             "RunCatDashboard.App",
             "Views",
-            "MainWindow.xaml");
-        string xaml = await File.ReadAllTextAsync(xamlPath);
-        XDocument document = XDocument.Parse(xaml);
-        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
-        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+            "SettingsWindow.xaml"));
 
-        string[] removedBindings =
-        [
-            "AnimationAverageCpuText",
-            "AnimationIntervalText",
-            "AppliedDisplayPolicyText",
-            "FullscreenDisplayStatusText",
-            "ForegroundDisplayDiagnostic",
-            "OverlayMonitorDiagnostic"
-        ];
-        foreach (string binding in removedBindings)
-        {
-            Assert.DoesNotContain(binding, xaml);
-            Assert.Null(typeof(MainWindowViewModel).GetProperty(binding));
-        }
-
-        string[] removedPresentation =
-        [
-            "Text=\"RunCatDashboard\"",
-            "Drag this panel while Interactive",
-            "Ctrl + Alt + Shift + R",
-            "Ctrl + Alt + Shift + D",
-            "toggle interaction mode",
-            "show/hide Dashboard",
-            "OverlayHotKeyText",
-            "Text=\"Run Cat\""
-        ];
-        foreach (string text in removedPresentation)
-        {
-            Assert.DoesNotContain(text, xaml);
-        }
-        Assert.Null(typeof(MainWindowViewModel).GetProperty("OverlayHotKeyText"));
-
-        XElement content = Assert.Single(document.Descendants(presentation + "StackPanel"),
-            element => (string?)element.Attribute(x + "Name") == "OverlayContent");
-        XElement topRow = Assert.Single(content.Elements(),
-            element => (string?)element.Attribute(x + "Name") == "OverlayTopRow");
-        Assert.Same(topRow, content.Elements().First());
-        Assert.Contains(topRow.Descendants(presentation + "Image"), image =>
-            ((string?)image.Attribute("Source"))?.Contains("AnimationFrameIndex") == true);
-        Assert.Contains(topRow.Descendants(presentation + "TextBlock"), textBlock =>
-            (string?)textBlock.Attribute("Text") == "{Binding OverlayModeText}");
-        Assert.Contains(topRow.Descendants(presentation + "Button"), button =>
-            (string?)button.Attribute("Content") == "Close");
-
-        XElement fullscreenHeading = topRow.ElementsAfterSelf().First();
-        Assert.Equal(presentation + "TextBlock", fullscreenHeading.Name);
-        Assert.Equal("Fullscreen display policy", (string?)fullscreenHeading.Attribute("Text"));
-
-        Assert.Contains("Text=\"Fullscreen display policy\"", xaml);
-        Assert.Contains("ItemsSource=\"{Binding DisplayPolicies}\"", xaml);
-        Assert.Contains("SelectedItem=\"{Binding RequestedDisplayPolicy, Mode=TwoWay}\"", xaml);
-        Assert.Contains("Text=\"System Metrics Dashboard\"", xaml);
-        Assert.Contains("ItemsSource=\"{Binding CpuHistoryNewestFirst}\"", xaml);
-        Assert.Contains("Text=\"{Binding SamplingStatus}\"", xaml);
-        Assert.Contains("Text=\"{Binding ErrorMessage}\"", xaml);
-        Assert.Contains("Text=\"{Binding OverlayErrorMessage}\"", xaml);
-        Assert.Contains("Text=\"{Binding HotKeyErrorMessage}\"", xaml);
-        Assert.Contains("Text=\"{Binding TrayErrorMessage}\"", xaml);
-        Assert.Contains("Text=\"{Binding DisplayPolicyFault}\"", xaml);
-        Assert.NotNull(typeof(MainWindowViewModel).GetProperty("DisplayPolicyFault"));
-        Assert.NotNull(typeof(MainWindowViewModel).GetProperty("HotKeyErrorMessage"));
+        Assert.DoesNotContain("ItemsSource=\"{Binding DisplayPolicies}\"", mainXaml);
+        Assert.Contains("ItemsSource=\"{Binding DisplayPolicies}\"", settingsXaml);
+        Assert.Contains("SelectedItem=\"{Binding RequestedDisplayPolicy}\"", settingsXaml);
     }
+
+    private static string GetMainWindowPath(string fileName) => Path.Combine(
+        FindRepositoryRoot(),
+        "src",
+        "RunCatDashboard.App",
+        "Views",
+        fileName);
 
     private static string FindRepositoryRoot()
     {

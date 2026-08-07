@@ -45,6 +45,12 @@ Responsible for XAML layout, styles, visual states, and view-only lifecycle inte
 
 Responsible for displayed metrics, collapsed and expanded state, interaction mode, commands, and user-facing state transitions. ViewModels must not call P/Invoke directly.
 
+Overlay presentation uses a persisted `OverlaySizeMode` plus one current field
+set. Size profiles are immutable pure data; `MainWindowViewModel` exposes only
+presentation state and derived dimensions. WPF applies Width, content-driven
+Height and field Visibility without rebuilding the Window. The view lifecycle
+re-clamps the new `ActualWidth`／`ActualHeight` after layout completes.
+
 ### Monitoring services
 
 Responsible for CPU and memory sampling, bounded metric history, sampling intervals, and cancellation.
@@ -109,6 +115,8 @@ The Window lifecycle can create its HWND while remaining hidden, initialize
 native styles/tray/hotkeys/sampling, restore placement, and only then apply the
 combined requested/fullscreen visibility. Settings Window is a transient View
 behind a singleton lifecycle service and never becomes `Application.MainWindow`.
+The runtime-only fullscreen display policy is edited from that Settings Window
+but remains outside the persisted schema.
 
 ### Interop
 

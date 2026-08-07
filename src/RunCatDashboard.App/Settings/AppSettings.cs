@@ -9,7 +9,7 @@ public sealed record AppSettings(
     MetricsSettings Metrics,
     StartupSettings Startup)
 {
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     public static AppSettings Defaults { get; } = new(
         CurrentVersion,
@@ -20,7 +20,9 @@ public sealed record AppSettings(
             OverlayHotKeyGesture.DashboardVisibilityDefault),
         new OverlaySettings(
             OverlayInteractionMode.ClickThrough,
-            OverlayHotKeyGesture.Default),
+            OverlayHotKeyGesture.Default,
+            OverlaySizeMode.Standard,
+            OverlayFieldSettings.ForMode(OverlaySizeMode.Standard)),
         new MetricsSettings(1000),
         new StartupSettings(false));
 }
@@ -33,7 +35,9 @@ public sealed record WindowSettings(
 
 public sealed record OverlaySettings(
     OverlayInteractionMode InteractionMode,
-    OverlayHotKeyGesture? InteractionHotKey = null);
+    OverlayHotKeyGesture? InteractionHotKey = null,
+    OverlaySizeMode SizeMode = OverlaySizeMode.Standard,
+    OverlayFieldSettings? Fields = null);
 
 public sealed record MetricsSettings(int SamplingIntervalMilliseconds);
 

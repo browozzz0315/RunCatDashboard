@@ -32,7 +32,8 @@ V1 目標是建立具有跑貓動畫、系統資訊與半透明 Dashboard 的 WP
 - CPU 即時使用率
 - 記憶體即時使用率
 - CPU 短期歷史折線圖
-- 收合與展開模式
+- CatOnly、Compact、Standard、Expanded 四種 Overlay 尺寸模式
+- 可選擇 CPU、Memory、歷史、狀態、互動模式與快捷鍵提示欄位
 - 半透明介面
 
 ### Windows 整合

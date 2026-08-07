@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using Microsoft.Win32;
@@ -39,6 +40,14 @@ public partial class MainWindow : Window
     private bool _isClosed;
     private bool _isPositionRestored;
     private bool _hasStartedBackgroundLifecycle;
+    private bool _isSizeClampPending;
+    private bool _isInitialPlacementPending;
+    private bool _hasPersistedPosition;
+#if DEBUG
+    private readonly List<string> _startupLayoutEvents = [];
+    private bool _hasRecordedFirstSizeChanged;
+    private bool _hasLoggedInitialLayout;
+#endif
 
     public MainWindow(
         MainWindowViewModel viewModel,
@@ -56,8 +65,15 @@ public partial class MainWindow : Window
         ExplicitShutdownCoordinator shutdownCoordinator,
         ILogger<MainWindow> logger)
     {
-        InitializeComponent();
         _viewModel = viewModel;
+        DataContext = viewModel;
+#if DEBUG
+        RecordStartupLayoutEvent($"ConstructorBeforeInitializeComponent(DataContext={DataContext is not null})");
+#endif
+        InitializeComponent();
+#if DEBUG
+        RecordStartupLayoutEvent($"ConstructorAfterInitializeComponent(DataContext={DataContext is not null})");
+#endif
         _overlayWindowController = overlayWindowController;
         _interactionToggleAction = interactionToggleAction;
         _globalHotKeyController = globalHotKeyController;
@@ -71,9 +87,9 @@ public partial class MainWindow : Window
         _settingsWindowService = settingsWindowService;
         _shutdownCoordinator = shutdownCoordinator;
         _logger = logger;
-        DataContext = viewModel;
 
         Loaded += OnLoaded;
+        SizeChanged += OnOverlaySizeChanged;
         Closing += OnWindowClosing;
         LocationChanged += OnOverlayLocationChanged;
         _viewModel.DisplayPolicyRequested += OnDisplayPolicyRequested;
@@ -95,6 +111,9 @@ public partial class MainWindow : Window
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
+#if DEBUG
+        RecordStartupLayoutEvent("SourceInitialized");
+#endif
 
         _windowHandle = new WindowInteropHelper(this).Handle;
         StartDisplayPolicyMonitoring();
@@ -197,6 +216,7 @@ public partial class MainWindow : Window
         _isClosed = true;
         _viewModel.SetAnimationVisibility(false);
         Loaded -= OnLoaded;
+        SizeChanged -= OnOverlaySizeChanged;
         Closing -= OnWindowClosing;
         LocationChanged -= OnOverlayLocationChanged;
         _viewModel.DisplayPolicyRequested -= OnDisplayPolicyRequested;
@@ -220,6 +240,12 @@ public partial class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+#if DEBUG
+        RecordStartupLayoutEvent("Loaded");
+        Dispatcher.BeginInvoke(
+            LogInitialLayout,
+            System.Windows.Threading.DispatcherPriority.ContextIdle);
+#endif
         Loaded -= OnLoaded;
         StartBackgroundLifecycle();
     }
@@ -326,6 +352,42 @@ public partial class MainWindow : Window
 
         DragMove();
         TryClampToCurrentWorkArea();
+    }
+
+    private void OnOverlaySizeChanged(object sender, SizeChangedEventArgs e)
+    {
+#if DEBUG
+        if (!_hasRecordedFirstSizeChanged)
+        {
+            _hasRecordedFirstSizeChanged = true;
+            RecordStartupLayoutEvent("FirstSizeChanged");
+        }
+#endif
+        if (_isClosed || _windowHandle == nint.Zero)
+        {
+            return;
+        }
+
+        if (!_isPositionRestored)
+        {
+            TryCompleteInitialPlacement();
+            return;
+        }
+
+        if (_isSizeClampPending)
+        {
+            return;
+        }
+
+        _isSizeClampPending = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _isSizeClampPending = false;
+            if (!_isClosed && _windowHandle != nint.Zero && _isPositionRestored)
+            {
+                TryClampToCurrentWorkArea();
+            }
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     private void OnCloseButtonClick(object sender, RoutedEventArgs e)
@@ -595,13 +657,33 @@ public partial class MainWindow : Window
     private void RestoreOrInitializePosition()
     {
         _isPositionRestored = false;
+        WindowSettings persisted = _settingsService.Current.Window;
+        _hasPersistedPosition =
+            persisted.Left is double && persisted.Top is double;
+        if (persisted.Left is double left && persisted.Top is double top)
+        {
+            Left = left;
+            Top = top;
+        }
+
+        _isInitialPlacementPending = true;
+        Dispatcher.BeginInvoke(
+            TryCompleteInitialPlacement,
+            System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    private void TryCompleteInitialPlacement()
+    {
+        if (!_isInitialPlacementPending || !HasFiniteWindowSize())
+        {
+            return;
+        }
+
+        _isInitialPlacementPending = false;
         try
         {
-            WindowSettings persisted = _settingsService.Current.Window;
-            if (persisted.Left is double left && persisted.Top is double top)
+            if (_hasPersistedPosition)
             {
-                Left = left;
-                Top = top;
                 TryClampToCurrentWorkArea();
             }
             else
@@ -638,7 +720,7 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             ReportPlacementFailure("InitializeWindowPosition", exception);
-            _viewModel.ReportOverlayError(
+            _viewModel.ReportPlacementError(
                 "Dashboard 位置初始化失敗，已保留目前位置。");
         }
     }
@@ -655,9 +737,17 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             ReportPlacementFailure("ClampWindowPosition", exception);
-            _viewModel.ReportOverlayError(
+            _viewModel.ReportPlacementError(
                 "Dashboard 位置調整失敗，已保留目前位置。");
         }
+    }
+
+    private bool HasFiniteWindowSize()
+    {
+        double width = GetWindowWidth();
+        double height = GetWindowHeight();
+        return double.IsFinite(width) && width > 0 &&
+               double.IsFinite(height) && height > 0;
     }
 
     private double GetWindowWidth()
@@ -701,6 +791,7 @@ public partial class MainWindow : Window
 
     private void ReportPlacementRecovery(string operation)
     {
+        _viewModel.ReportPlacementError(null);
         if (_placementFaultEpisode.Observe(isFaulted: false) != FaultEpisodeTransition.Recovered)
         {
             return;
@@ -718,6 +809,68 @@ public partial class MainWindow : Window
         {
         }
     }
+
+#if DEBUG
+    private void RecordStartupLayoutEvent(string eventName)
+    {
+        if (!_hasLoggedInitialLayout)
+        {
+            BindingExpression? widthBinding = BindingOperations.GetBindingExpression(
+                this,
+                WidthProperty);
+            _startupLayoutEvents.Add(
+                $"{eventName}(Width={Width}, Binding={widthBinding?.Status.ToString() ?? "Missing"})");
+        }
+    }
+
+    private void LogInitialLayout()
+    {
+        if (_hasLoggedInitialLayout || _isClosed)
+        {
+            return;
+        }
+
+        _hasLoggedInitialLayout = true;
+        BindingExpression? widthBinding = BindingOperations.GetBindingExpression(
+            this,
+            WidthProperty);
+        string dataItem = widthBinding?.DataItem is null
+            ? "null"
+            : widthBinding.DataItem.GetType().FullName ?? widthBinding.DataItem.GetType().Name;
+        string dataContext = DataContext is null
+            ? "null"
+            : DataContext.GetType().FullName ?? DataContext.GetType().Name;
+
+        try
+        {
+            _logger.LogInformation(
+                "MainWindow initial layout trace. {Operation} {Subsystem} {CommandLine} {EventSequence} {SizeMode} {OverlayWidth} {WindowWidth} {WindowActualWidth} {WindowMinWidth} {WindowMaxWidth} {WidthBindingStatus} {WidthBindingDataItem} {WidthBindingResolvedSourcePropertyName} {CatViewportActualWidth} {CatViewportActualHeight} {ScrollViewerActualWidth} {OverlayContentDesiredWidth} {HasDataContext} {DataContextType}",
+                "TraceInitialLayout",
+                "OverlayPresentation",
+                Environment.CommandLine,
+                string.Join(" -> ", _startupLayoutEvents),
+                _viewModel.SizeMode,
+                _viewModel.OverlayWidth,
+                Width,
+                ActualWidth,
+                MinWidth,
+                MaxWidth,
+                widthBinding?.Status.ToString() ?? "Missing",
+                dataItem,
+                widthBinding?.ResolvedSourcePropertyName ?? "null",
+                CatViewport.ActualWidth,
+                CatViewport.ActualHeight,
+                OverlayScrollViewer.ActualWidth,
+                OverlayContent.DesiredSize.Width,
+                DataContext is not null,
+                dataContext);
+        }
+        catch
+        {
+            // DEBUG-only diagnostics must not alter Window lifecycle behavior.
+        }
+    }
+#endif
 
     private void LogFailure(
         string operation,
