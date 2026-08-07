@@ -43,6 +43,13 @@ public static class AppSettingsValidator
                 hotKey = OverlayHotKeyGesture.Default;
             }
         }
+        OverlaySizeMode sizeMode = settings.Overlay is not null &&
+            Enum.IsDefined(settings.Overlay.SizeMode)
+                ? settings.Overlay.SizeMode
+                : OverlaySizeMode.Standard;
+        OverlayFieldSettings fields = NormalizeFields(
+            sizeMode,
+            settings.Overlay?.Fields);
         int interval = settings.Metrics is not null &&
             AllowedSamplingIntervals.Contains(settings.Metrics.SamplingIntervalMilliseconds)
                 ? settings.Metrics.SamplingIntervalMilliseconds
@@ -55,11 +62,50 @@ public static class AppSettingsValidator
                 top,
                 settings.Window?.IsDashboardVisible ?? true,
                 visibilityHotKey),
-            new OverlaySettings(mode, hotKey),
+            new OverlaySettings(mode, hotKey, sizeMode, fields),
             new MetricsSettings(interval),
             new StartupSettings(settings.Startup?.RunAtLoginRequested ?? false));
     }
 
     private static bool IsFinite(double? value) =>
         value is null || double.IsFinite(value.Value);
+
+    private static OverlayFieldSettings NormalizeFields(
+        OverlaySizeMode mode,
+        OverlayFieldSettings? fields)
+    {
+        if (mode == OverlaySizeMode.CatOnly)
+        {
+            return OverlayFieldSettings.ForMode(OverlaySizeMode.CatOnly);
+        }
+
+        if (fields is null || !fields.ShowCpu && !fields.ShowMemory)
+        {
+            return OverlayFieldSettings.ForMode(mode);
+        }
+
+        return fields;
+    }
+
+    public static bool TryValidatePresentation(
+        OverlaySizeMode mode,
+        OverlayFieldSettings fields,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(fields);
+        if (!Enum.IsDefined(mode))
+        {
+            error = "Overlay 尺寸模式無效。";
+            return false;
+        }
+
+        if (mode != OverlaySizeMode.CatOnly && !fields.ShowCpu && !fields.ShowMemory)
+        {
+            error = "Compact、Standard 與 Expanded 至少需要顯示 CPU 或 Memory。";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
 }

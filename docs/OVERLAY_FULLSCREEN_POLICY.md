@@ -43,8 +43,9 @@ DWM 與 fallback 均失敗、monitor 查詢失敗或 callback／timer／dispatch
 每秒 reconciliation 不逐次寫日誌。只有 fullscreen／visibility／topmost semantic
 transition、fault episode 的第一次 failure及 recovery會記錄；Win32 operation、error
 code／HRESULT與 requested／applied／fault context進 structured log。Overlay 不再顯示
-foreground HWND、class、bounds、monitor或 Visible／Topmost raw diagnostics，只保留
-policy ComboBox及必要的精簡使用者 fault。
+foreground HWND、class、bounds、monitor或 Visible／Topmost raw diagnostics。Policy
+ComboBox 位於 Settings Window；Overlay 只在非 CatOnly 模式且實際 fault 存在時顯示
+精簡 diagnostics。
 
 ## 監測 lifecycle
 

@@ -52,4 +52,20 @@ public sealed class WindowPositionClampTests
         Assert.Equal(window.Width, result.Width);
         Assert.Equal(window.Height, result.Height);
     }
+
+    [Fact]
+    public void Clamp_AfterWindowGrows_UsesNewDimensions()
+    {
+        var workArea = new WindowWorkArea(0, 0, 1000, 700);
+        var compact = new WindowBounds(700, 300, 300, 260);
+        WindowBounds compactResult = WindowPositionClamp.Clamp(compact, workArea);
+
+        var expanded = compactResult with { Width = 500, Height = 620 };
+        WindowBounds expandedResult = WindowPositionClamp.Clamp(expanded, workArea);
+
+        Assert.Equal(500, expandedResult.Left);
+        Assert.Equal(80, expandedResult.Top);
+        Assert.Equal(500, expandedResult.Width);
+        Assert.Equal(620, expandedResult.Height);
+    }
 }

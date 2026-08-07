@@ -51,6 +51,7 @@ internal sealed class JsonSettingsStore : ISettingsStore
     static JsonSettingsStore()
     {
         SerializerOptions.Converters.Add(new LenientInteractionModeConverter());
+        SerializerOptions.Converters.Add(new LenientOverlaySizeModeConverter());
         SerializerOptions.Converters.Add(new LenientOverlayHotKeyKeyConverter());
     }
 
@@ -89,7 +90,7 @@ internal sealed class JsonSettingsStore : ISettingsStore
                 element.TryGetInt32(out int parsedVersion)
                     ? parsedVersion
                     : 0;
-            if (version is not 1 and not 2 && version != AppSettings.CurrentVersion)
+            if (version is not 1 and not 2 and not 3 && version != AppSettings.CurrentVersion)
             {
                 string backup = BackupInvalidFile($"unsupported-v{version}");
                 return new SettingsLoadResult(
@@ -258,6 +259,35 @@ internal sealed class JsonSettingsStore : ISettingsStore
         public override void Write(
             Utf8JsonWriter writer,
             OverlayInteractionMode value,
+            JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
+    }
+
+    private sealed class LenientOverlaySizeModeConverter : JsonConverter<OverlaySizeMode>
+    {
+        public override OverlaySizeMode Read(
+            ref Utf8JsonReader reader,
+            Type typeToConvert,
+            JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String &&
+                Enum.TryParse(reader.GetString(), ignoreCase: true, out OverlaySizeMode mode))
+            {
+                return mode;
+            }
+            if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out int numeric))
+            {
+                return (OverlaySizeMode)numeric;
+            }
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                return (OverlaySizeMode)(-1);
+            }
+            throw new JsonException("sizeMode must be a string or integer.");
+        }
+
+        public override void Write(
+            Utf8JsonWriter writer,
+            OverlaySizeMode value,
             JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
     }
 

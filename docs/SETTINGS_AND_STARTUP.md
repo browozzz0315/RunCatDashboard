@@ -3,11 +3,11 @@
 ## Schema 與儲存位置
 
 設定檔固定為 `%LocalAppData%\RunCatDashboard\settings.json`，目前 schema
-version 為 `3`：
+version 為 `4`：
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "window": {
     "left": -420.5,
     "top": 18.25,
@@ -28,6 +28,17 @@ version 為 `3`：
       "shift": true,
       "windows": false,
       "key": "R"
+    },
+    "sizeMode": "Standard",
+    "fields": {
+      "showCpu": true,
+      "showMemory": true,
+      "showUsedAndTotalMemory": true,
+      "showLastUpdated": true,
+      "showSamplingStatus": true,
+      "showRecentCpuHistory": false,
+      "showInteractionMode": true,
+      "showHotKeyHints": false
     }
   },
   "metrics": {
@@ -40,19 +51,26 @@ version 為 `3`：
 ```
 
 `left`／`top` 是 WPF device-independent units，必須成對、finite；允許負座標。
-不保存 Width／Height。沒有有效位置時使用既有 primary work area 右上角預設位置。
+不保存 Width／Height；實際 Width、cat viewport、padding 與 MaxHeight 由 `sizeMode`
+對應的固定 profile 衍生，Height 由目前可見內容決定。沒有有效位置時使用既有
+primary work area 右上角預設位置。
 `isDashboardVisible` 是 user-requested visibility，不是 fullscreen 暫時隱藏後的
 `Window.IsVisible`。`interactionMode` 同樣是 requested mode，不保存 native applied
 mode。`interactionHotKey` 與 `visibilityHotKey` 都結構化保存 modifier 與主要按鍵，
-不以顯示字串作為持久化格式。未知 JSON 欄位會忽略；不預建其他 Issue 的 section。
+不以顯示字串作為持久化格式。`fields` 只保存目前一組欄位狀態，不保存 per-mode
+設定。未知 JSON 欄位會忽略；不預建其他 Issue 的 section。
 
 預設值為 Dashboard visible、`ClickThrough`、Overlay 模式快捷鍵
 `Ctrl+Alt+Shift+R`、Dashboard 顯示／隱藏快捷鍵 `Ctrl+Alt+Shift+D`、1000ms、
-Windows 登入啟動關閉。
+Windows 登入啟動關閉、`Standard` 與其預設欄位組合。
 sampling interval 僅接受 250、500、1000、2000、5000ms，非法值直接回 1000ms，
 不做 clamp。非法 interaction mode 回 `ClickThrough`；無效或不成對的位置回未設定。
-schema version 1 與 2 仍可讀取：所有既有 window、overlay mode、interaction hotkey、
-metrics 與 startup 值均保留，缺少的快捷鍵補各自預設值，下一次保存時寫為 version 3。
+schema version 1、2 與 3 仍可讀取：所有既有 window、interaction mode、hotkey、
+metrics 與 startup 值均保留，缺少的快捷鍵補各自預設值，presentation migration 為
+`Standard` defaults，下一次保存時寫為 version 4。
+未知 `sizeMode` 回退 `Standard`；缺少 `fields` 時使用該 mode defaults。CatOnly 一律
+normalize 為全部欄位關閉。損壞 JSON 中非 CatOnly 的 CPU／Memory 皆關閉時回退該
+mode defaults；Settings Window draft 則明確拒絕保存，不靜默改值。
 無效或缺少的單一快捷鍵只回退該組預設；合法自訂值不會被 normalize 覆蓋。
 快捷鍵 JSON 只保存 `control`、`alt`、`shift`、`windows` 與 `key`；`DisplayText`
 及 `UsageWarning` 是 runtime 衍生值，不屬於持久化契約。舊 version 3 檔案若包含
@@ -79,7 +97,7 @@ file，以最新 snapshot 重新 merge；只有 revision 穩定時才原子 comm
 ## 啟動順序與 hidden startup
 
 啟動順序為 single-instance ownership、建立正式 logger、建立 DI、載入/驗證 settings、reconcile
-HKCU Run、套用 requested visibility/interaction 與 sampling interval、建立
+HKCU Run、套用 requested visibility/interaction、presentation 與 sampling interval、建立
 MainWindow HWND、初始化 native styles/tray/hotkeys/sampling、restore/clamp 位置，
 最後才依 requested visibility 與 fullscreen policy 決定是否 Show。
 
@@ -95,8 +113,9 @@ tray、hotkeys、sampling 與 shared tray animation 仍會初始化且不產生 
 
 Fullscreen policy 只改 policy visibility input，不覆寫保存的 user-requested
 visibility。使用者 hidden 後進出 fullscreen 仍 hidden；user visible 且 fullscreen
-active 時只暫時 actual hidden，離開後才恢復。Fullscreen policy 本輪仍不持久化，
-每次啟動仍使用既有預設 `HideOverFullscreenApps`。
+active 時只暫時 actual hidden，離開後才恢復。Fullscreen policy 仍不持久化，每次啟動
+使用 `HideOverFullscreenApps`。Policy ComboBox 已移至 Settings Window，Save 成功後
+才套用本次 runtime draft；MainWindow 不再顯示該控制項。
 
 ## Sampling 與視窗位置
 
@@ -108,6 +127,13 @@ MainWindow code-behind 只把 Left／Top 純資料交給 settings service。rest
 LocationChanged 回寫，restore 後的移動與 display clamp 走 debounce；drag/clamp 完成
 以及真正退出前都擷取最終位置。persisted 座標先套用，再用 HWND 所在 monitor 的
 DPI-aware work area clamp。
+
+Overlay 尺寸或可見欄位改變時不重建 MainWindow，也不停止或重啟 sampling／animation。
+WPF 完成 content-driven layout 後，MainWindow lifecycle 使用新的
+`ActualWidth`／`ActualHeight` 再次呼叫相同 work-area clamp。Clamp 純函式本身不變；
+首次 restore 也會等到 layout 產生有限且大於零的實際尺寸後才 clamp。若內容超過
+profile MaxHeight，ScrollViewer 保留滑鼠滾輪垂直捲動，但水平與垂直 scrollbar
+固定不顯示。
 
 ## Windows 登入啟動
 
@@ -127,12 +153,15 @@ tray 選單的「設定...」開啟單一 Settings Window；重複要求會 rest
 window 並 Activate，Closed 後可重新建立。它不會成為 `Application.MainWindow`，
 Dashboard hidden 時也能開啟，關閉它不會退出 App。
 
-每次開啟從 current settings 建立兩組快捷鍵 draft。取消只關閉且不套用；儲存先驗證
+每次開啟從 current settings 建立兩組快捷鍵、size mode、單一 fields 與 runtime
+fullscreen policy draft。切換成另一個 size mode 時套用該 mode defaults；同 mode
+重複指定不清除目前 draft，defaults 套用後仍可修改欄位。取消只關閉且不套用；儲存先驗證
 兩組及彼此不得相同，再要求 Windows-specific controller 分別套用。每組相同新舊值是
 no-op；不同值只解除及註冊該組，新組合失敗時 rollback 該組原值且不更新 current 或
 JSON。兩組 native 套用完成後，以 atomic write 保存完整 candidate；保存失敗時 rollback
 已套用的 gesture，current snapshot、requested visibility、interaction mode、sampling 與
-startup state 都不發布新值。Dashboard rollback 失敗保留 system tray；Overlay rollback
+startup 與 presentation state 都不發布新值。Presentation 只在 persistence commit 成功後
+透過 UI dispatcher 套用。Dashboard rollback 失敗保留 system tray；Overlay rollback
 失敗另保持 visible + Interactive。MainWindow 位置以及 tray/hotkey 引起的
 visibility/interaction 變更仍自動保存，不等待 Settings Window 儲存。
 
@@ -148,7 +177,8 @@ Logs 路徑由同一 `ApplicationPaths` 提供；詳細規則見
 ## 人工驗證
 
 單元測試不證明真實 HKCU、Windows shell、DPI、多螢幕、焦點或畫面無閃爍。發布前
-需人工驗證 hidden cold start、負座標/拔除螢幕後 clamp、Settings Window activation、
+需人工驗證 hidden cold start、四種 size mode、欄位自然收縮、CatOnly 操作、尺寸變更後
+負座標／多螢幕 clamp、Settings Window activation、
 Registry command、Explorer recovery、hotkey conflict、fullscreen precedence、
 Windows 登出/重啟與 tray Exit cleanup。
 

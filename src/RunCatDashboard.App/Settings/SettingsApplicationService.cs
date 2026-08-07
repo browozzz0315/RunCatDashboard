@@ -1,4 +1,5 @@
 using RunCatDashboard.App.Startup;
+using RunCatDashboard.App.Services;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Windowing;
 
@@ -8,6 +9,7 @@ public interface ISettingsApplicationService
 {
     AppSettings Current { get; }
     RunAtLoginState RunAtLoginState { get; }
+    OverlayDisplayPolicy CurrentDisplayPolicy { get; }
     Task<RunAtLoginState> ApplyDraftAsync(
         bool dashboardVisible,
         OverlayInteractionMode interactionMode,
@@ -15,6 +17,9 @@ public interface ISettingsApplicationService
         OverlayHotKeyGesture visibilityHotKey,
         int samplingIntervalMilliseconds,
         bool runAtLoginRequested,
+        OverlaySizeMode sizeMode = OverlaySizeMode.Standard,
+        OverlayFieldSettings? fields = null,
+        OverlayDisplayPolicy displayPolicy = OverlayDisplayPolicy.HideOverFullscreenApps,
         CancellationToken cancellationToken = default);
 }
 
@@ -26,6 +31,7 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
     private readonly IGlobalHotKeyController _hotKeys;
     private readonly MainWindowViewModel _mainViewModel;
     private readonly IRunAtLoginService _runAtLogin;
+    private readonly IUiDispatcher _uiDispatcher;
 
     internal SettingsApplicationService(
         ISettingsService settings,
@@ -33,7 +39,8 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         IInteractionModeToggleAction interaction,
         IGlobalHotKeyController hotKeys,
         MainWindowViewModel mainViewModel,
-        IRunAtLoginService runAtLogin)
+        IRunAtLoginService runAtLogin,
+        IUiDispatcher uiDispatcher)
     {
         _settings = settings;
         _visibility = visibility;
@@ -41,10 +48,13 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         _hotKeys = hotKeys;
         _mainViewModel = mainViewModel;
         _runAtLogin = runAtLogin;
+        _uiDispatcher = uiDispatcher;
     }
 
     public AppSettings Current => _settings.Current;
     public RunAtLoginState RunAtLoginState => _runAtLogin.State;
+    public OverlayDisplayPolicy CurrentDisplayPolicy =>
+        _mainViewModel.RequestedDisplayPolicy;
 
     public async Task<RunAtLoginState> ApplyDraftAsync(
         bool dashboardVisible,
@@ -53,12 +63,20 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         OverlayHotKeyGesture visibilityHotKey,
         int samplingIntervalMilliseconds,
         bool runAtLoginRequested,
+        OverlaySizeMode sizeMode = OverlaySizeMode.Standard,
+        OverlayFieldSettings? fields = null,
+        OverlayDisplayPolicy displayPolicy = OverlayDisplayPolicy.HideOverFullscreenApps,
         CancellationToken cancellationToken = default)
     {
         if (!Enum.IsDefined(interactionMode))
             throw new ArgumentOutOfRangeException(nameof(interactionMode));
         if (!AppSettingsValidator.AllowedSamplingIntervals.Contains(samplingIntervalMilliseconds))
             throw new ArgumentOutOfRangeException(nameof(samplingIntervalMilliseconds));
+        fields ??= OverlayFieldSettings.ForMode(sizeMode);
+        if (!AppSettingsValidator.TryValidatePresentation(sizeMode, fields, out string? presentationError))
+            throw new ArgumentException(presentationError, nameof(fields));
+        if (!Enum.IsDefined(displayPolicy))
+            throw new ArgumentOutOfRangeException(nameof(displayPolicy));
         ArgumentNullException.ThrowIfNull(interactionHotKey);
         ArgumentNullException.ThrowIfNull(visibilityHotKey);
         if (!interactionHotKey.TryValidate(out string? hotKeyValidationError))
@@ -139,7 +157,9 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
                         interactionHotKey,
                         visibilityHotKey,
                         samplingIntervalMilliseconds,
-                        runAtLoginRequested),
+                        runAtLoginRequested,
+                        sizeMode,
+                        fields),
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -184,6 +204,13 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         }
 
         AppSettings applied = _settings.Current;
+        await _uiDispatcher.InvokeAsync(() =>
+        {
+            _mainViewModel.ApplyOverlayPresentation(
+                applied.Overlay.SizeMode,
+                applied.Overlay.Fields ?? OverlayFieldSettings.ForMode(applied.Overlay.SizeMode));
+            _mainViewModel.RequestedDisplayPolicy = displayPolicy;
+        });
         _visibility.SetUserRequestedVisibility(applied.Window.IsDashboardVisible);
         _interaction.RequestMode(applied.Overlay.InteractionMode);
         _mainViewModel.UpdateSamplingInterval(
@@ -240,7 +267,9 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         OverlayHotKeyGesture interactionHotKey,
         OverlayHotKeyGesture visibilityHotKey,
         int samplingIntervalMilliseconds,
-        bool runAtLoginRequested)
+        bool runAtLoginRequested,
+        OverlaySizeMode sizeMode,
+        OverlayFieldSettings fields)
     {
         bool effectiveVisibility =
             latest.Window.IsDashboardVisible != previous.Window.IsDashboardVisible
@@ -256,6 +285,15 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         StartupSettings effectiveStartup = latest.Startup != previous.Startup
             ? latest.Startup
             : new StartupSettings(runAtLoginRequested);
+        bool presentationChangedConcurrently =
+            latest.Overlay.SizeMode != previous.Overlay.SizeMode ||
+            latest.Overlay.Fields != previous.Overlay.Fields;
+        OverlaySizeMode effectiveSizeMode = presentationChangedConcurrently
+            ? latest.Overlay.SizeMode
+            : sizeMode;
+        OverlayFieldSettings effectiveFields = presentationChangedConcurrently
+            ? latest.Overlay.Fields ?? OverlayFieldSettings.ForMode(latest.Overlay.SizeMode)
+            : fields;
 
         return latest with
         {
@@ -267,10 +305,13 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
             Overlay = latest.Overlay with
             {
                 InteractionMode = effectiveMode,
-                InteractionHotKey = interactionHotKey
+                InteractionHotKey = interactionHotKey,
+                SizeMode = effectiveSizeMode,
+                Fields = effectiveFields
             },
             Metrics = effectiveMetrics,
             Startup = effectiveStartup
         };
     }
+
 }

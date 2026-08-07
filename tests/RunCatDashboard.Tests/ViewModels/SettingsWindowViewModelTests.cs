@@ -50,7 +50,9 @@ public sealed class SettingsWindowViewModelTests
             (false, OverlayInteractionMode.Interactive,
                 new OverlayHotKeyGesture(false, true, true, true, OverlayHotKeyKey.F12),
                 OverlayHotKeyGesture.DashboardVisibilityDefault,
-                250, true),
+                250, true, OverlaySizeMode.Standard,
+                OverlayFieldSettings.ForMode(OverlaySizeMode.Standard),
+                OverlayDisplayPolicy.HideOverFullscreenApps),
             application.LastDraft);
         Assert.True(viewModel.RunAtLoginApplied);
         Assert.Equal(1, closes);
@@ -200,14 +202,104 @@ public sealed class SettingsWindowViewModelTests
             viewModel.ValidationError);
     }
 
+    [Fact]
+    public void SizeModeChange_AppliesDefaultsAndAllowsFieldOverride()
+    {
+        var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService());
+
+        viewModel.SizeMode = OverlaySizeMode.Expanded;
+        Assert.Equal(
+            OverlayFieldSettings.ForMode(OverlaySizeMode.Expanded),
+            viewModel.Fields);
+
+        viewModel.ShowRecentCpuHistory = false;
+        viewModel.ShowCpu = false;
+
+        Assert.False(viewModel.ShowRecentCpuHistory);
+        Assert.False(viewModel.ShowCpu);
+        Assert.True(viewModel.ShowMemory);
+    }
+
+    [Fact]
+    public void AssigningSameSizeMode_DoesNotResetCurrentDraft()
+    {
+        var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService())
+        {
+            SizeMode = OverlaySizeMode.Expanded
+        };
+        viewModel.ShowHotKeyHints = false;
+
+        viewModel.SizeMode = OverlaySizeMode.Expanded;
+
+        Assert.False(viewModel.ShowHotKeyHints);
+    }
+
+    [Fact]
+    public void CatOnly_NormalizesDraftToNoFieldsAndDisablesSelection()
+    {
+        var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService())
+        {
+            SizeMode = OverlaySizeMode.CatOnly
+        };
+
+        Assert.Equal(
+            OverlayFieldSettings.ForMode(OverlaySizeMode.CatOnly),
+            viewModel.Fields);
+        Assert.False(viewModel.IsFieldSelectionEnabled);
+    }
+
+    [Fact]
+    public async Task Save_NonCatModeWithoutCpuOrMemory_ShowsValidationAndStaysOpen()
+    {
+        var application = new FakeSettingsApplicationService();
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            ShowCpu = false,
+            ShowMemory = false
+        };
+        int closes = 0;
+        viewModel.CloseRequested += () => closes++;
+
+        viewModel.SaveCommand.Execute(null);
+        await viewModel.SaveCommand.ExecutionTask!;
+
+        Assert.Contains("至少需要顯示 CPU 或 Memory", viewModel.ValidationError);
+        Assert.Equal(0, closes);
+        Assert.Equal(0, application.ApplyCount);
+    }
+
+    [Fact]
+    public async Task SaveAndReopen_PersistsOnlyCurrentFieldSet()
+    {
+        var application = new FakeSettingsApplicationService();
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            SizeMode = OverlaySizeMode.Expanded
+        };
+        viewModel.ShowCpu = false;
+        viewModel.ShowHotKeyHints = false;
+
+        viewModel.SaveCommand.Execute(null);
+        await viewModel.SaveCommand.ExecutionTask!;
+        var reopened = new SettingsWindowViewModel(application);
+
+        Assert.Equal(OverlaySizeMode.Expanded, reopened.SizeMode);
+        Assert.False(reopened.ShowCpu);
+        Assert.True(reopened.ShowMemory);
+        Assert.False(reopened.ShowHotKeyHints);
+    }
+
     private sealed class FakeSettingsApplicationService : ISettingsApplicationService
     {
         public AppSettings Current { get; private set; } = AppSettings.Defaults;
         public RunAtLoginState RunAtLoginState { get; } = new(false, false, null);
+        public OverlayDisplayPolicy CurrentDisplayPolicy { get; private set; } =
+            OverlayDisplayPolicy.HideOverFullscreenApps;
         internal int ApplyCount { get; private set; }
         internal Exception? ApplyException { get; init; }
         internal (bool, OverlayInteractionMode, OverlayHotKeyGesture,
-            OverlayHotKeyGesture, int, bool) LastDraft { get; private set; }
+            OverlayHotKeyGesture, int, bool, OverlaySizeMode,
+            OverlayFieldSettings, OverlayDisplayPolicy) LastDraft { get; private set; }
         public Task<RunAtLoginState> ApplyDraftAsync(
             bool dashboardVisible,
             OverlayInteractionMode interactionMode,
@@ -215,6 +307,9 @@ public sealed class SettingsWindowViewModelTests
             OverlayHotKeyGesture visibilityHotKey,
             int samplingIntervalMilliseconds,
             bool runAtLoginRequested,
+            OverlaySizeMode sizeMode = OverlaySizeMode.Standard,
+            OverlayFieldSettings? fields = null,
+            OverlayDisplayPolicy displayPolicy = OverlayDisplayPolicy.HideOverFullscreenApps,
             CancellationToken cancellationToken = default)
         {
             ApplyCount++;
@@ -222,8 +317,15 @@ public sealed class SettingsWindowViewModelTests
             {
                 return Task.FromException<RunAtLoginState>(ApplyException);
             }
+            fields ??= OverlayFieldSettings.ForMode(sizeMode);
+            if (!AppSettingsValidator.TryValidatePresentation(sizeMode, fields, out string? error))
+            {
+                return Task.FromException<RunAtLoginState>(
+                    new ArgumentException(error, nameof(fields)));
+            }
             LastDraft = (dashboardVisible, interactionMode, interactionHotKey, visibilityHotKey,
-                samplingIntervalMilliseconds, runAtLoginRequested);
+                samplingIntervalMilliseconds, runAtLoginRequested, sizeMode, fields, displayPolicy);
+            CurrentDisplayPolicy = displayPolicy;
             Current = Current with
             {
                 Window = Current.Window with
@@ -231,7 +333,7 @@ public sealed class SettingsWindowViewModelTests
                     IsDashboardVisible = dashboardVisible,
                     VisibilityHotKey = visibilityHotKey
                 },
-                Overlay = new OverlaySettings(interactionMode, interactionHotKey),
+                Overlay = new OverlaySettings(interactionMode, interactionHotKey, sizeMode, fields),
                 Metrics = new MetricsSettings(samplingIntervalMilliseconds),
                 Startup = new StartupSettings(runAtLoginRequested)
             };

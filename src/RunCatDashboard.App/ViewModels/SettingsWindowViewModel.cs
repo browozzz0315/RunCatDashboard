@@ -22,6 +22,9 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     [ObservableProperty] private bool _isHotKeyCaptureActive;
     [ObservableProperty] private string? _visibilityHotKeyCaptureMessage;
     [ObservableProperty] private bool _isVisibilityHotKeyCaptureActive;
+    [ObservableProperty] private OverlaySizeMode _sizeMode;
+    [ObservableProperty] private OverlayFieldSettings _fields;
+    [ObservableProperty] private OverlayDisplayPolicy _requestedDisplayPolicy;
 
     public SettingsWindowViewModel(ISettingsApplicationService applicationService)
     {
@@ -38,6 +41,9 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _runAtLoginRequested = settings.Startup.RunAtLoginRequested;
         _runAtLoginApplied = applicationService.RunAtLoginState.Applied;
         _startupFault = applicationService.RunAtLoginState.Fault;
+        _sizeMode = settings.Overlay.SizeMode;
+        _fields = settings.Overlay.Fields ?? OverlayFieldSettings.ForMode(_sizeMode);
+        _requestedDisplayPolicy = applicationService.CurrentDisplayPolicy;
         SaveCommand = new AsyncRelayCommand(SaveAsync);
         CancelCommand = new RelayCommand(() =>
         {
@@ -49,6 +55,51 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     public IReadOnlyList<int> SamplingIntervals { get; } = [250, 500, 1000, 2000, 5000];
     public IReadOnlyList<OverlayInteractionMode> InteractionModes { get; } =
         [OverlayInteractionMode.Interactive, OverlayInteractionMode.ClickThrough];
+    public IReadOnlyList<OverlaySizeMode> SizeModes { get; } =
+        Enum.GetValues<OverlaySizeMode>();
+    public IReadOnlyList<OverlayDisplayPolicy> DisplayPolicies { get; } =
+        Enum.GetValues<OverlayDisplayPolicy>();
+    public bool IsFieldSelectionEnabled => SizeMode != OverlaySizeMode.CatOnly;
+    public bool ShowCpu
+    {
+        get => Fields.ShowCpu;
+        set => Fields = Fields with { ShowCpu = value };
+    }
+    public bool ShowMemory
+    {
+        get => Fields.ShowMemory;
+        set => Fields = Fields with { ShowMemory = value };
+    }
+    public bool ShowUsedAndTotalMemory
+    {
+        get => Fields.ShowUsedAndTotalMemory;
+        set => Fields = Fields with { ShowUsedAndTotalMemory = value };
+    }
+    public bool ShowLastUpdated
+    {
+        get => Fields.ShowLastUpdated;
+        set => Fields = Fields with { ShowLastUpdated = value };
+    }
+    public bool ShowSamplingStatus
+    {
+        get => Fields.ShowSamplingStatus;
+        set => Fields = Fields with { ShowSamplingStatus = value };
+    }
+    public bool ShowRecentCpuHistory
+    {
+        get => Fields.ShowRecentCpuHistory;
+        set => Fields = Fields with { ShowRecentCpuHistory = value };
+    }
+    public bool ShowInteractionMode
+    {
+        get => Fields.ShowInteractionMode;
+        set => Fields = Fields with { ShowInteractionMode = value };
+    }
+    public bool ShowHotKeyHints
+    {
+        get => Fields.ShowHotKeyHints;
+        set => Fields = Fields with { ShowHotKeyHints = value };
+    }
     public bool HotKeyControl
     {
         get => InteractionHotKey.Control;
@@ -166,6 +217,14 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     {
         EndHotKeyCapture();
         ValidationError = null;
+        if (!AppSettingsValidator.TryValidatePresentation(
+            SizeMode,
+            Fields,
+            out string? presentationError))
+        {
+            ValidationError = presentationError;
+            return;
+        }
         try
         {
             var state = await _applicationService.ApplyDraftAsync(
@@ -174,7 +233,10 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
                 InteractionHotKey,
                 VisibilityHotKey,
                 SamplingIntervalMilliseconds,
-                RunAtLoginRequested);
+                RunAtLoginRequested,
+                SizeMode,
+                Fields,
+                RequestedDisplayPolicy);
             RunAtLoginApplied = state.Applied;
             StartupFault = state.Fault;
             CloseRequested?.Invoke();
@@ -234,6 +296,14 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
                 return "請選擇有效的 Metrics sampling interval。";
             }
 
+            if (string.Equals(
+                argumentException.ParamName,
+                nameof(Fields),
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return argumentException.Message.Split(" (Parameter", StringSplitOptions.None)[0];
+            }
+
             return "設定值無效，請檢查後再試。";
         }
 
@@ -268,5 +338,25 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(VisibilityHotKeyWarning));
         OnPropertyChanged(nameof(VisibilityHotKeyError));
         OnPropertyChanged(nameof(InteractionHotKeyError));
+    }
+
+    partial void OnSizeModeChanged(OverlaySizeMode value)
+    {
+        ValidationError = null;
+        Fields = OverlayFieldSettings.ForMode(value);
+        OnPropertyChanged(nameof(IsFieldSelectionEnabled));
+    }
+
+    partial void OnFieldsChanged(OverlayFieldSettings value)
+    {
+        ValidationError = null;
+        OnPropertyChanged(nameof(ShowCpu));
+        OnPropertyChanged(nameof(ShowMemory));
+        OnPropertyChanged(nameof(ShowUsedAndTotalMemory));
+        OnPropertyChanged(nameof(ShowLastUpdated));
+        OnPropertyChanged(nameof(ShowSamplingStatus));
+        OnPropertyChanged(nameof(ShowRecentCpuHistory));
+        OnPropertyChanged(nameof(ShowInteractionMode));
+        OnPropertyChanged(nameof(ShowHotKeyHints));
     }
 }

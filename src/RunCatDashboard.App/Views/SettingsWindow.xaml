@@ -27,6 +27,31 @@
                               SelectedItem="{Binding InteractionMode}" />
                 </StackPanel>
             </GroupBox>
+            <GroupBox Header="Overlay 顯示" Padding="12" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="尺寸模式" Margin="0,0,0,4" />
+                    <ComboBox ItemsSource="{Binding SizeModes}"
+                              SelectedItem="{Binding SizeMode}"
+                              Margin="0,0,0,10" />
+                    <TextBlock Text="全螢幕顯示政策" Margin="0,0,0,4" />
+                    <ComboBox ItemsSource="{Binding DisplayPolicies}"
+                              SelectedItem="{Binding RequestedDisplayPolicy}"
+                              Margin="0,0,0,10" />
+                    <TextBlock Text="顯示欄位" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <WrapPanel IsEnabled="{Binding IsFieldSelectionEnabled}">
+                        <CheckBox Content="CPU" IsChecked="{Binding ShowCpu}" Margin="0,0,16,8" />
+                        <CheckBox Content="Memory" IsChecked="{Binding ShowMemory}" Margin="0,0,16,8" />
+                        <CheckBox Content="Used / Total Memory" IsChecked="{Binding ShowUsedAndTotalMemory}" Margin="0,0,16,8" />
+                        <CheckBox Content="Last updated" IsChecked="{Binding ShowLastUpdated}" Margin="0,0,16,8" />
+                        <CheckBox Content="Sampling status" IsChecked="{Binding ShowSamplingStatus}" Margin="0,0,16,8" />
+                        <CheckBox Content="Recent CPU history" IsChecked="{Binding ShowRecentCpuHistory}" Margin="0,0,16,8" />
+                        <CheckBox Content="Interaction mode" IsChecked="{Binding ShowInteractionMode}" Margin="0,0,16,8" />
+                        <CheckBox Content="快捷鍵提示" IsChecked="{Binding ShowHotKeyHints}" Margin="0,0,16,8" />
+                    </WrapPanel>
+                    <TextBlock Text="Compact、Standard 與 Expanded 至少需要顯示 CPU 或 Memory；CatOnly 只顯示貓咪動畫。"
+                               Foreground="DimGray" TextWrapping="Wrap" />
+                </StackPanel>
+            </GroupBox>
             <GroupBox Header="Overlay 模式快捷鍵" Padding="12" Margin="0,0,0,12">
                 <StackPanel>
                     <WrapPanel Margin="0,0,0,10">

@@ -23,16 +23,19 @@ public sealed class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task SchemaV3_RoundTripsAllContractFields()
+    public async Task SchemaV4_RoundTripsAllContractFields()
     {
         var visibilityHotKey = new OverlayHotKeyGesture(
             false, true, true, true, OverlayHotKeyKey.F11);
         var expected = new AppSettings(
-            3,
+            4,
             new WindowSettings(-420.5, 18.25, false, visibilityHotKey),
             new OverlaySettings(
                 OverlayInteractionMode.Interactive,
-                new OverlayHotKeyGesture(true, false, true, true, OverlayHotKeyKey.F12)),
+                new OverlayHotKeyGesture(true, false, true, true, OverlayHotKeyKey.F12),
+                OverlaySizeMode.Expanded,
+                new OverlayFieldSettings(
+                    false, true, true, false, true, true, false, true)),
             new MetricsSettings(5000),
             new StartupSettings(true));
         var store = CreateStore();
@@ -42,7 +45,9 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         Assert.Equal(expected, result.Settings);
         string json = await File.ReadAllTextAsync(Path.Combine(_directory, "settings.json"));
-        Assert.Contains("\"version\": 3", json);
+        Assert.Contains("\"version\": 4", json);
+        Assert.Contains("\"sizeMode\": \"Expanded\"", json);
+        Assert.Contains("\"showHotKeyHints\": true", json);
         Assert.Contains("\"visibilityHotKey\"", json);
         Assert.Contains("\"interactionHotKey\"", json);
         Assert.Contains("\"key\": \"F12\"", json);
@@ -117,7 +122,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         SettingsLoadResult result = await CreateStore().LoadAsync();
 
-        Assert.Equal(3, result.Settings.Version);
+        Assert.Equal(4, result.Settings.Version);
         Assert.Equal(
             new WindowSettings(
                 -420.5,
@@ -127,6 +132,9 @@ public sealed class JsonSettingsStoreTests : IDisposable
             result.Settings.Window);
         Assert.Equal(OverlayInteractionMode.Interactive, result.Settings.Overlay.InteractionMode);
         Assert.Equal(OverlayHotKeyGesture.Default, result.Settings.Overlay.InteractionHotKey);
+        Assert.Equal(OverlaySizeMode.Standard, result.Settings.Overlay.SizeMode);
+        Assert.Equal(OverlayFieldSettings.ForMode(OverlaySizeMode.Standard),
+            result.Settings.Overlay.Fields);
         Assert.Equal(5000, result.Settings.Metrics.SamplingIntervalMilliseconds);
         Assert.True(result.Settings.Startup.RunAtLoginRequested);
         Assert.Null(result.Diagnostic);
@@ -153,7 +161,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         SettingsLoadResult result = await CreateStore().LoadAsync();
 
-        Assert.Equal(3, result.Settings.Version);
+        Assert.Equal(4, result.Settings.Version);
         Assert.Equal(OverlayHotKeyGesture.DashboardVisibilityDefault,
             result.Settings.Window.VisibilityHotKey);
         Assert.Equal(OverlayHotKeyKey.F8, result.Settings.Overlay.InteractionHotKey!.Key);
@@ -162,6 +170,93 @@ public sealed class JsonSettingsStoreTests : IDisposable
         Assert.False(result.Settings.Window.IsDashboardVisible);
         Assert.Equal(500, result.Settings.Metrics.SamplingIntervalMilliseconds);
         Assert.True(result.Settings.Startup.RunAtLoginRequested);
+        Assert.Equal(OverlaySizeMode.Standard, result.Settings.Overlay.SizeMode);
+        Assert.Equal(OverlayFieldSettings.ForMode(OverlaySizeMode.Standard),
+            result.Settings.Overlay.Fields);
+    }
+
+    [Fact]
+    public async Task SchemaV3_MigratesToStandardPresentationDefaults()
+    {
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(Path.Combine(_directory, "settings.json"), """
+            {
+              "version": 3,
+              "window": { "left": 10, "top": 20, "isDashboardVisible": true },
+              "overlay": { "interactionMode": "ClickThrough" },
+              "metrics": { "samplingIntervalMilliseconds": 1000 },
+              "startup": { "runAtLoginRequested": false }
+            }
+            """);
+
+        SettingsLoadResult result = await CreateStore().LoadAsync();
+
+        Assert.Equal(4, result.Settings.Version);
+        Assert.Equal(10, result.Settings.Window.Left);
+        Assert.Equal(20, result.Settings.Window.Top);
+        Assert.Equal(OverlaySizeMode.Standard, result.Settings.Overlay.SizeMode);
+        Assert.Equal(OverlayFieldSettings.ForMode(OverlaySizeMode.Standard),
+            result.Settings.Overlay.Fields);
+    }
+
+    [Theory]
+    [InlineData("FutureMode", OverlaySizeMode.Standard)]
+    [InlineData("Compact", OverlaySizeMode.Compact)]
+    public async Task SchemaV4_UnknownOrMissingPresentationValuesUseModeDefaults(
+        string sizeMode,
+        OverlaySizeMode expectedMode)
+    {
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(Path.Combine(_directory, "settings.json"), $$"""
+            {
+              "version": 4,
+              "window": { "isDashboardVisible": true },
+              "overlay": {
+                "interactionMode": "ClickThrough",
+                "sizeMode": "{{sizeMode}}"
+              },
+              "metrics": { "samplingIntervalMilliseconds": 1000 },
+              "startup": { "runAtLoginRequested": false }
+            }
+            """);
+
+        SettingsLoadResult result = await CreateStore().LoadAsync();
+
+        Assert.Equal(expectedMode, result.Settings.Overlay.SizeMode);
+        Assert.Equal(OverlayFieldSettings.ForMode(expectedMode), result.Settings.Overlay.Fields);
+    }
+
+    [Fact]
+    public async Task SchemaV4_CatOnlyNormalizesAllFieldsOff()
+    {
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(Path.Combine(_directory, "settings.json"), """
+            {
+              "version": 4,
+              "window": { "isDashboardVisible": true },
+              "overlay": {
+                "interactionMode": "ClickThrough",
+                "sizeMode": "CatOnly",
+                "fields": {
+                  "showCpu": true,
+                  "showMemory": true,
+                  "showUsedAndTotalMemory": true,
+                  "showLastUpdated": true,
+                  "showSamplingStatus": true,
+                  "showRecentCpuHistory": true,
+                  "showInteractionMode": true,
+                  "showHotKeyHints": true
+                }
+              },
+              "metrics": { "samplingIntervalMilliseconds": 1000 },
+              "startup": { "runAtLoginRequested": false }
+            }
+            """);
+
+        SettingsLoadResult result = await CreateStore().LoadAsync();
+
+        Assert.Equal(OverlayFieldSettings.ForMode(OverlaySizeMode.CatOnly),
+            result.Settings.Overlay.Fields);
     }
 
     [Fact]

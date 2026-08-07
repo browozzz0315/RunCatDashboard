@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Xml.Linq;
 using RunCatDashboard.App.Animation;
+using RunCatDashboard.App.Settings;
 using RunCatDashboard.App.Views;
 
 namespace RunCatDashboard.Tests.Resources;
@@ -13,6 +14,7 @@ namespace RunCatDashboard.Tests.Resources;
 public sealed class RunCatResourceTests
 {
     private const int ExpectedFrameCount = RunCatAnimationController.DefaultFrameCount;
+    private const double MinimumRenderedSafetyMargin = 4d;
     private static readonly byte[] PngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
     private static readonly string[] FrameResourceNames =
         Enumerable.Range(1, ExpectedFrameCount)
@@ -154,7 +156,7 @@ public sealed class RunCatResourceTests
     }
 
     [Fact]
-    public void MainWindow_UsesCenteredTwoTimesNearestNeighborScalingWithoutChangingPanelSize()
+    public void MainWindow_UsesFiniteAnimationCanvasAndUniformImageWithoutViewboxCropping()
     {
         string xamlPath = FindRepositoryFile("src/RunCatDashboard.App/Views/MainWindow.xaml");
         XDocument document = XDocument.Load(xamlPath);
@@ -166,24 +168,114 @@ public sealed class RunCatResourceTests
                     "RunCatFrameConverter",
                     StringComparison.Ordinal) == true);
 
-        XElement border = Assert.IsType<XElement>(image.Parent);
-        XElement scaleTransform = Assert.Single(image.Elements(presentation + "Image.RenderTransform"))
-            .Element(presentation + "ScaleTransform") ??
-            throw new InvalidOperationException("Run Cat ScaleTransform is missing.");
+        XElement animationCanvas = Assert.IsType<XElement>(image.Parent);
+        XElement viewport = Assert.IsType<XElement>(animationCanvas.Parent);
 
-        Assert.Equal("98", border.Attribute("Width")?.Value);
-        Assert.Equal("66", border.Attribute("Height")?.Value);
-        Assert.Equal("True", border.Attribute("ClipToBounds")?.Value);
-        Assert.Equal("64", image.Attribute("Width")?.Value);
-        Assert.Equal("64", image.Attribute("Height")?.Value);
-        Assert.Equal("Center", image.Attribute("HorizontalAlignment")?.Value);
-        Assert.Equal("Center", image.Attribute("VerticalAlignment")?.Value);
+        Assert.Equal(presentation + "Canvas", animationCanvas.Name);
+        Assert.Equal("True", viewport.Attribute("ClipToBounds")?.Value);
+        Assert.Equal("{Binding CatViewportWidth}", viewport.Attribute("Width")?.Value);
+        Assert.Equal("{Binding CatViewportHeight}", viewport.Attribute("Height")?.Value);
+        Assert.Equal("{Binding CatViewportWidth}", animationCanvas.Attribute("Width")?.Value);
+        Assert.Equal("{Binding CatViewportHeight}", animationCanvas.Attribute("Height")?.Value);
+        Assert.Equal("{Binding CatRenderSize}", image.Attribute("Width")?.Value);
+        Assert.Equal("{Binding CatRenderSize}", image.Attribute("Height")?.Value);
+        Assert.Equal("{Binding CatRenderOffsetX}", image.Attribute("Canvas.Left")?.Value);
+        Assert.Equal("{Binding CatRenderOffsetY}", image.Attribute("Canvas.Top")?.Value);
         Assert.Equal("NearestNeighbor", image.Attribute("RenderOptions.BitmapScalingMode")?.Value);
         Assert.Equal("Uniform", image.Attribute("Stretch")?.Value);
         Assert.NotEqual("Fill", image.Attribute("Stretch")?.Value);
-        Assert.Equal("0.5,0.5", image.Attribute("RenderTransformOrigin")?.Value);
-        Assert.Equal("2", scaleTransform.Attribute("ScaleX")?.Value);
-        Assert.Equal("2", scaleTransform.Attribute("ScaleY")?.Value);
+        Assert.Empty(image.Elements(presentation + "Image.RenderTransform"));
+        Assert.Empty(viewport.Descendants(presentation + "Viewbox"));
+    }
+
+    [Fact]
+    public void EveryFrame_VisiblePixelsRemainInsideEveryModeViewport()
+    {
+        IReadOnlyDictionary<string, byte[]> resources = ReadRunCatResources();
+
+        foreach (OverlaySizeMode mode in Enum.GetValues<OverlaySizeMode>())
+        {
+            OverlaySizeProfile profile = OverlaySizeProfiles.Get(mode);
+            double viewportWidth = GetCatViewportWidth(profile);
+
+            foreach (string resourceName in FrameResourceNames)
+            {
+                AlphaBounds bounds = GetAlphaBounds(Decode(resources[resourceName]));
+                PixelBounds rendered = RenderWithProfile(bounds, profile);
+
+                Assert.True(rendered.Left >= MinimumRenderedSafetyMargin,
+                    $"{mode} {resourceName} lacks the left safety margin.");
+                Assert.True(rendered.Top >= MinimumRenderedSafetyMargin,
+                    $"{mode} {resourceName} lacks the top safety margin.");
+                Assert.True(rendered.Right <= viewportWidth - MinimumRenderedSafetyMargin,
+                    $"{mode} {resourceName} lacks the right safety margin.");
+                Assert.True(
+                    rendered.Bottom <= profile.CatViewportHeight - MinimumRenderedSafetyMargin,
+                    $"{mode} {resourceName} lacks the bottom safety margin.");
+            }
+        }
+    }
+
+    [Fact]
+    public void FloorLine_StaysBelowEveryFramesIntendedVisibleRegion()
+    {
+        const double floorLineHeight = 1d;
+        IReadOnlyDictionary<string, byte[]> resources = ReadRunCatResources();
+
+        foreach (OverlaySizeMode mode in Enum.GetValues<OverlaySizeMode>())
+        {
+            OverlaySizeProfile profile = OverlaySizeProfiles.Get(mode);
+            double floorLineTop = profile.CatViewportHeight - floorLineHeight;
+
+            foreach (string resourceName in FrameResourceNames)
+            {
+                PixelBounds rendered = RenderWithProfile(
+                    GetAlphaBounds(Decode(resources[resourceName])),
+                    profile);
+
+                Assert.True(rendered.Bottom + MinimumRenderedSafetyMargin <= floorLineTop,
+                    $"{mode} {resourceName} enters the floor-line safety region.");
+            }
+        }
+    }
+
+    [Fact]
+    public void CatOnlyCloseButton_DoesNotOverlapVisiblePixelsInAnyFrame()
+    {
+        string xamlPath = FindRepositoryFile("src/RunCatDashboard.App/Views/MainWindow.xaml");
+        XDocument document = XDocument.Load(xamlPath);
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        XElement closeButton = Assert.Single(
+            document.Descendants(presentation + "Button"),
+            element => element.Attribute(x + "Name")?.Value == "CatCloseButton");
+        Assert.Equal("Right", closeButton.Attribute("HorizontalAlignment")?.Value);
+        Assert.Equal("Top", closeButton.Attribute("VerticalAlignment")?.Value);
+
+        double buttonWidth = double.Parse(closeButton.Attribute("Width")!.Value);
+        double buttonHeight = double.Parse(closeButton.Attribute("Height")!.Value);
+        double[] margin = closeButton.Attribute("Margin")!.Value
+            .Split(',')
+            .Select(double.Parse)
+            .ToArray();
+        OverlaySizeProfile profile = OverlaySizeProfiles.Get(OverlaySizeMode.CatOnly);
+        double viewportWidth = GetCatViewportWidth(profile);
+        var buttonBounds = new PixelBounds(
+            viewportWidth - margin[2] - buttonWidth,
+            margin[1],
+            viewportWidth - margin[2],
+            margin[1] + buttonHeight);
+        IReadOnlyDictionary<string, byte[]> resources = ReadRunCatResources();
+
+        foreach (string resourceName in FrameResourceNames)
+        {
+            PixelBounds rendered = RenderWithProfile(
+                GetAlphaBounds(Decode(resources[resourceName])),
+                profile);
+
+            Assert.False(Overlaps(buttonBounds, rendered),
+                $"CatOnly Close overlaps visible pixels in {resourceName}.");
+        }
     }
 
     private static IReadOnlyDictionary<string, byte[]> ReadRunCatResources()
@@ -233,6 +325,54 @@ public sealed class RunCatResourceTests
             pixels);
     }
 
+    private static AlphaBounds GetAlphaBounds(DecodedImage image)
+    {
+        int minX = image.Width;
+        int minY = image.Height;
+        int maxX = -1;
+        int maxY = -1;
+        int stride = image.Width * 4;
+        for (int y = 0; y < image.Height; y++)
+        {
+            for (int x = 0; x < image.Width; x++)
+            {
+                if (image.Pixels[(y * stride) + (x * 4) + 3] == 0)
+                {
+                    continue;
+                }
+
+                minX = Math.Min(minX, x);
+                minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x);
+                maxY = Math.Max(maxY, y);
+            }
+        }
+
+        Assert.True(maxX >= minX && maxY >= minY);
+        return new AlphaBounds(minX, minY, maxX, maxY, image.Width, image.Height);
+    }
+
+    private static PixelBounds RenderWithProfile(
+        AlphaBounds bounds,
+        OverlaySizeProfile profile)
+    {
+        double scale = profile.CatRenderSize / bounds.ImageWidth;
+        return new PixelBounds(
+            profile.CatRenderOffsetX + (bounds.MinX * scale),
+            profile.CatRenderOffsetY + (bounds.MinY * scale),
+            profile.CatRenderOffsetX + ((bounds.MaxX + 1) * scale),
+            profile.CatRenderOffsetY + ((bounds.MaxY + 1) * scale));
+    }
+
+    private static double GetCatViewportWidth(OverlaySizeProfile profile) =>
+        profile.Width - 16d - 2d - (2d * profile.ContentPadding);
+
+    private static bool Overlaps(PixelBounds first, PixelBounds second) =>
+        first.Left < second.Right &&
+        first.Right > second.Left &&
+        first.Top < second.Bottom &&
+        first.Bottom > second.Top;
+
     private static string FindRepositoryFile(string relativePath)
     {
         return TryFindRepositoryFile(relativePath) ??
@@ -262,4 +402,18 @@ public sealed class RunCatResourceTests
         int Height,
         PixelFormat Format,
         byte[] Pixels);
+
+    private sealed record AlphaBounds(
+        int MinX,
+        int MinY,
+        int MaxX,
+        int MaxY,
+        int ImageWidth,
+        int ImageHeight);
+
+    private sealed record PixelBounds(
+        double Left,
+        double Top,
+        double Right,
+        double Bottom);
 }

@@ -87,7 +87,7 @@ tray presenter 的 controller events，並 dispose controller；重複 dispose �
 
 ## 範圍界線
 
-- 收合／展開與 compact mode 由 Issue #18 負責；本 Issue 只提供固定尺寸、可重用的跑貓顯示區塊。
+- CatOnly／Compact／Standard／Expanded 與欄位顯示由 Issue #18 負責；動畫仍使用同一組固定 frame、controller 與 CPU speed mapping。
 - system tray 使用同一 Cat-2 動畫衍生的預先產生小尺寸 icon；不提供貓種或主題切換。
 - 不包含 runner 選擇、多動物、主題、自訂動畫速度或設定保存。
 - WPF rendering、焦點、fullscreen Hide／Show、DPI 與長時間資源趨勢仍須在目標 Windows 環境人工驗證，不能只由單元測試宣稱完成。

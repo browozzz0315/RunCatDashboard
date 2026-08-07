@@ -4,6 +4,7 @@ using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
+using RunCatDashboard.App.Settings;
 using RunCatDashboard.Tests.Diagnostics;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Windowing;
@@ -41,6 +42,67 @@ public sealed class MainWindowViewModelTests
             OverlayDisplayPolicy.HideOverFullscreenApps,
             viewModel.RequestedDisplayPolicy);
         Assert.Null(viewModel.DisplayPolicyFault);
+        Assert.Null(viewModel.PlacementErrorMessage);
+    }
+
+    [Fact]
+    public async Task PlacementFault_RecoveryClearsOnlyPlacementDiagnostic()
+    {
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(),
+            new ControlledDelay());
+
+        viewModel.ReportOverlayError("other fault");
+        viewModel.ReportPlacementError("placement fault");
+
+        Assert.True(viewModel.HasDiagnostics);
+        Assert.Equal("placement fault", viewModel.PlacementErrorMessage);
+
+        viewModel.ReportPlacementError(null);
+
+        Assert.Null(viewModel.PlacementErrorMessage);
+        Assert.Equal("other fault", viewModel.OverlayErrorMessage);
+        Assert.True(viewModel.HasDiagnostics);
+    }
+
+    [Fact]
+    public async Task PlacementFault_RecoveryCollapsesDiagnosticsWhenNoOtherFaultExists()
+    {
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(),
+            new ControlledDelay());
+
+        viewModel.ReportPlacementError("placement fault");
+        Assert.True(viewModel.HasDiagnostics);
+
+        viewModel.ReportPlacementError(null);
+
+        Assert.False(viewModel.HasDiagnostics);
+    }
+
+    [Fact]
+    public async Task FieldsAndDiagnostics_DoNotChangeProfileWidth()
+    {
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(),
+            new ControlledDelay());
+        viewModel.ApplyOverlayPresentation(
+            OverlaySizeMode.Standard,
+            OverlayFieldSettings.ForMode(OverlaySizeMode.Standard));
+        double profileWidth = viewModel.OverlayWidth;
+
+        viewModel.ApplyOverlayPresentation(
+            OverlaySizeMode.Standard,
+            OverlayFieldSettings.ForMode(OverlaySizeMode.Standard) with
+            {
+                ShowRecentCpuHistory = true,
+                ShowHotKeyHints = true
+            });
+        viewModel.ReportOverlayError("overlay fault");
+        viewModel.ReportPlacementError("placement fault");
+
+        Assert.Equal(308d, profileWidth);
+        Assert.Equal(profileWidth, viewModel.OverlayWidth);
     }
 
     [Fact]
@@ -159,6 +221,103 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("Sampling", viewModel.SamplingStatus);
         Assert.Equal(1, service.SampleCount);
         Assert.Empty(delay.RequestedDelays.Skip(1));
+    }
+
+    [Fact]
+    public async Task PresentationChanges_DoNotRestartSamplingAnimationOrMutateBoundedHistory()
+    {
+        var service = new SequenceMetricsService(
+            Snapshot(10d), Snapshot(20d), Snapshot(30d), Snapshot(40d));
+        var delay = new ControlledDelay();
+        var animation = new FakeAnimationController();
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            service, delay, cpuHistoryCapacity: 3, animationController: animation);
+        viewModel.Start();
+        await AdvanceToNextSampleAsync(delay);
+        await AdvanceToNextSampleAsync(delay);
+        await AdvanceToNextSampleAsync(delay);
+        await delay.WaitUntilDelayStartsAsync();
+
+        double?[] historyBefore = viewModel.CpuHistory
+            .Select(snapshot => snapshot.CpuUsagePercent)
+            .ToArray();
+        int sampleCountBefore = service.SampleCount;
+
+        for (int iteration = 0; iteration < 3; iteration++)
+        {
+            foreach (OverlaySizeMode mode in Enum.GetValues<OverlaySizeMode>())
+            {
+                viewModel.ApplyOverlayPresentation(mode, OverlayFieldSettings.ForMode(mode));
+            }
+        }
+
+        Assert.True(viewModel.IsSampling);
+        Assert.Equal(sampleCountBefore, service.SampleCount);
+        Assert.Equal([20d, 30d, 40d], historyBefore);
+        Assert.Equal(historyBefore, viewModel.CpuHistory.Select(snapshot => snapshot.CpuUsagePercent));
+        Assert.Equal(3, viewModel.CpuHistory.Count);
+        Assert.Equal(0, animation.StartCount);
+        Assert.Equal(0, animation.StopCount);
+    }
+
+    [Fact]
+    public async Task Presentation_EffectivelyHidesUsedMemoryWithoutMemoryAndHidesEverythingInCatOnly()
+    {
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(Snapshot(10d)),
+            new ControlledDelay());
+        OverlayFieldSettings fields = OverlayFieldSettings.ForMode(OverlaySizeMode.Expanded) with
+        {
+            ShowMemory = false,
+            ShowUsedAndTotalMemory = true
+        };
+
+        viewModel.ApplyOverlayPresentation(OverlaySizeMode.Expanded, fields);
+        Assert.False(viewModel.ShowMemory);
+        Assert.False(viewModel.ShowUsedAndTotalMemory);
+
+        viewModel.ReportOverlayError("test fault");
+        viewModel.ApplyOverlayPresentation(
+            OverlaySizeMode.CatOnly,
+            OverlayFieldSettings.ForMode(OverlaySizeMode.CatOnly));
+
+        Assert.True(viewModel.IsCatOnly);
+        Assert.False(viewModel.ShowDashboardContent);
+        Assert.False(viewModel.HasDiagnostics);
+        Assert.All(
+            new[]
+            {
+                viewModel.ShowCpu,
+                viewModel.ShowMemory,
+                viewModel.ShowUsedAndTotalMemory,
+                viewModel.ShowLastUpdated,
+                viewModel.ShowSamplingStatus,
+                viewModel.ShowRecentCpuHistory,
+                viewModel.ShowInteractionMode,
+                viewModel.ShowHotKeyHints
+            },
+            Assert.False);
+    }
+
+    [Fact]
+    public async Task HotKeyHints_AreDerivedFromEffectiveRegistrationGestureText()
+    {
+        await using MainWindowViewModel viewModel = CreateViewModel(
+            new SequenceMetricsService(Snapshot(10d)),
+            new ControlledDelay());
+        viewModel.ApplyOverlayPresentation(
+            OverlaySizeMode.Expanded,
+            OverlayFieldSettings.ForMode(OverlaySizeMode.Expanded));
+
+        viewModel.ApplyHotKeyRegistrations(
+        [
+            new(GlobalHotKeyAction.ToggleInteractionMode, 1, "Ctrl + F12", true, null, null),
+            new(GlobalHotKeyAction.ToggleDashboardVisibility, 2, "Win + F9", true, null, null)
+        ]);
+
+        Assert.Contains("Ctrl + F12", viewModel.HotKeyHintsText);
+        Assert.Contains("Win + F9", viewModel.HotKeyHintsText);
+        Assert.True(viewModel.ShowHotKeyHints);
     }
 
     [Fact]
