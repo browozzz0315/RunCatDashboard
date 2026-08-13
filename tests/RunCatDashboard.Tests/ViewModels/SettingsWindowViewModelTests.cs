@@ -170,7 +170,10 @@ public sealed class SettingsWindowViewModelTests
         {
             ApplyException = new HotKeyConfigurationException("快捷鍵無法套用。")
         };
-        var viewModel = new SettingsWindowViewModel(application);
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            IsDashboardVisible = false
+        };
         int closes = 0;
         viewModel.CloseRequested += () => closes++;
 
@@ -190,7 +193,10 @@ public sealed class SettingsWindowViewModelTests
                 "快捷鍵格式無效。",
                 "interactionHotKey")
         };
-        var viewModel = new SettingsWindowViewModel(application);
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            IsDashboardVisible = false
+        };
 
         viewModel.SaveCommand.Execute(null);
         await viewModel.SaveCommand.ExecutionTask!;
@@ -289,6 +295,266 @@ public sealed class SettingsWindowViewModelTests
         Assert.False(reopened.ShowHotKeyHints);
     }
 
+    [Fact]
+    public void NewWindow_StartsCleanWithApplyDisabledAndSaveEnabled()
+    {
+        var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService());
+
+        Assert.False(viewModel.IsDirty);
+        Assert.False(viewModel.ApplyCommand.CanExecute(null));
+        Assert.True(viewModel.SaveCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void EditAndRevert_TracksStructuralDirtyState()
+    {
+        var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService());
+
+        viewModel.SamplingIntervalMilliseconds = 500;
+        Assert.True(viewModel.IsDirty);
+        Assert.True(viewModel.ApplyCommand.CanExecute(null));
+
+        viewModel.SamplingIntervalMilliseconds = 1000;
+        Assert.False(viewModel.IsDirty);
+        Assert.False(viewModel.ApplyCommand.CanExecute(null));
+    }
+
+    [Theory]
+    [InlineData("dashboard")]
+    [InlineData("interaction-mode")]
+    [InlineData("interaction-hotkey")]
+    [InlineData("visibility-hotkey")]
+    [InlineData("sampling")]
+    [InlineData("startup")]
+    [InlineData("presentation")]
+    [InlineData("fullscreen-policy")]
+    public void EveryEditableSettingsGroup_ParticipatesInDirtyState(string group)
+    {
+        var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService());
+
+        switch (group)
+        {
+            case "dashboard":
+                viewModel.IsDashboardVisible = false;
+                break;
+            case "interaction-mode":
+                viewModel.InteractionMode = OverlayInteractionMode.Interactive;
+                break;
+            case "interaction-hotkey":
+                viewModel.HotKeyKey = OverlayHotKeyKey.F8;
+                break;
+            case "visibility-hotkey":
+                viewModel.VisibilityHotKeyKey = OverlayHotKeyKey.F9;
+                break;
+            case "sampling":
+                viewModel.SamplingIntervalMilliseconds = 500;
+                break;
+            case "startup":
+                viewModel.RunAtLoginRequested = true;
+                break;
+            case "presentation":
+                viewModel.ShowRecentCpuHistory = true;
+                break;
+            case "fullscreen-policy":
+                viewModel.RequestedDisplayPolicy = OverlayDisplayPolicy.NeverTopmost;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(group));
+        }
+
+        Assert.True(viewModel.IsDirty);
+    }
+
+    [Fact]
+    public void ModeDefaultReset_ParticipatesInDirtyComparison()
+    {
+        var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService());
+
+        viewModel.SizeMode = OverlaySizeMode.Expanded;
+        Assert.True(viewModel.IsDirty);
+        Assert.Equal(OverlayFieldSettings.ForMode(OverlaySizeMode.Expanded), viewModel.Fields);
+
+        viewModel.SizeMode = OverlaySizeMode.Standard;
+        Assert.False(viewModel.IsDirty);
+        Assert.Equal(OverlayFieldSettings.ForMode(OverlaySizeMode.Standard), viewModel.Fields);
+    }
+
+    [Fact]
+    public async Task ApplySuccess_UsesPipelineOnceKeepsOpenUpdatesBaselineAndClearsError()
+    {
+        var application = new FakeSettingsApplicationService();
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            IsDashboardVisible = false,
+            ValidationError = "舊錯誤"
+        };
+        int closes = 0;
+        viewModel.CloseRequested += () => closes++;
+
+        viewModel.ApplyCommand.Execute(null);
+        await viewModel.ApplyCommand.ExecutionTask!;
+
+        Assert.Equal(1, application.ApplyCount);
+        Assert.Equal(0, closes);
+        Assert.False(viewModel.IsDirty);
+        Assert.False(viewModel.ApplyCommand.CanExecute(null));
+        Assert.Null(viewModel.ValidationError);
+        Assert.False(application.Current.Window.IsDashboardVisible);
+    }
+
+    [Fact]
+    public async Task ApplyFailure_KeepsWindowDraftAndBaselineForRetry()
+    {
+        var application = new FakeSettingsApplicationService
+        {
+            ApplyException = new HotKeyConfigurationException("快捷鍵無法套用。")
+        };
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            SamplingIntervalMilliseconds = 500
+        };
+        int closes = 0;
+        viewModel.CloseRequested += () => closes++;
+
+        viewModel.ApplyCommand.Execute(null);
+        await viewModel.ApplyCommand.ExecutionTask!;
+
+        Assert.Equal(0, closes);
+        Assert.True(viewModel.IsDirty);
+        Assert.Equal(500, viewModel.SamplingIntervalMilliseconds);
+        Assert.Equal(1000, application.Current.Metrics.SamplingIntervalMilliseconds);
+
+        application.ApplyException = null;
+        viewModel.ApplyCommand.Execute(null);
+        await viewModel.ApplyCommand.ExecutionTask!;
+
+        Assert.Equal(2, application.ApplyCount);
+        Assert.False(viewModel.IsDirty);
+        Assert.Equal(500, application.Current.Metrics.SamplingIntervalMilliseconds);
+    }
+
+    [Fact]
+    public async Task RepeatedApply_AfterNewEditAppliesEachDraftExactlyOnce()
+    {
+        var application = new FakeSettingsApplicationService();
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            SamplingIntervalMilliseconds = 500
+        };
+
+        viewModel.ApplyCommand.Execute(null);
+        await viewModel.ApplyCommand.ExecutionTask!;
+        viewModel.SamplingIntervalMilliseconds = 250;
+        viewModel.ApplyCommand.Execute(null);
+        await viewModel.ApplyCommand.ExecutionTask!;
+
+        Assert.Equal(2, application.ApplyCount);
+        Assert.False(viewModel.IsDirty);
+        Assert.Equal(250, application.Current.Metrics.SamplingIntervalMilliseconds);
+    }
+
+    [Fact]
+    public async Task CleanSave_ClosesWithoutCallingApplicationPipeline()
+    {
+        var application = new FakeSettingsApplicationService();
+        var viewModel = new SettingsWindowViewModel(application);
+        int closes = 0;
+        viewModel.CloseRequested += () => closes++;
+
+        viewModel.SaveCommand.Execute(null);
+        await viewModel.SaveCommand.ExecutionTask!;
+
+        Assert.Equal(0, application.ApplyCount);
+        Assert.Equal(1, closes);
+    }
+
+    [Fact]
+    public async Task DirtySave_UsesSamePipelineAndClosesOnlyAfterSuccess()
+    {
+        var application = new FakeSettingsApplicationService();
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            RunAtLoginRequested = true
+        };
+        int closes = 0;
+        viewModel.CloseRequested += () => closes++;
+
+        viewModel.SaveCommand.Execute(null);
+        await viewModel.SaveCommand.ExecutionTask!;
+
+        Assert.Equal(1, application.ApplyCount);
+        Assert.Equal(1, closes);
+        Assert.False(viewModel.IsDirty);
+    }
+
+    [Fact]
+    public async Task ApplyThenEditAndCancel_LeavesLatestAppliedBaselineInRuntimeAndPersistence()
+    {
+        var application = new FakeSettingsApplicationService();
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            SamplingIntervalMilliseconds = 500
+        };
+
+        viewModel.ApplyCommand.Execute(null);
+        await viewModel.ApplyCommand.ExecutionTask!;
+        viewModel.SamplingIntervalMilliseconds = 250;
+        viewModel.CancelCommand.Execute(null);
+
+        Assert.Equal(1, application.ApplyCount);
+        Assert.Equal(500, application.Current.Metrics.SamplingIntervalMilliseconds);
+    }
+
+    [Fact]
+    public async Task ReopenAfterApply_UsesLatestAppliedStateAsCleanBaseline()
+    {
+        var application = new FakeSettingsApplicationService();
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            RequestedDisplayPolicy = OverlayDisplayPolicy.AlwaysOnTop,
+            SizeMode = OverlaySizeMode.Compact
+        };
+
+        viewModel.ApplyCommand.Execute(null);
+        await viewModel.ApplyCommand.ExecutionTask!;
+        var reopened = new SettingsWindowViewModel(application);
+
+        Assert.False(reopened.IsDirty);
+        Assert.Equal(OverlayDisplayPolicy.AlwaysOnTop, reopened.RequestedDisplayPolicy);
+        Assert.Equal(OverlaySizeMode.Compact, reopened.SizeMode);
+        Assert.Equal(OverlayFieldSettings.ForMode(OverlaySizeMode.Compact), reopened.Fields);
+    }
+
+    [Fact]
+    public async Task Applying_DisablesAllActionsAndPreventsOverlappingPipelines()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var application = new FakeSettingsApplicationService { ApplyGate = gate };
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            SamplingIntervalMilliseconds = 500
+        };
+
+        viewModel.ApplyCommand.Execute(null);
+        Task firstApplication = viewModel.ApplyCommand.ExecutionTask!;
+        Assert.Equal(1, application.ApplyCount);
+        Assert.True(viewModel.IsApplying);
+        Assert.False(viewModel.ApplyCommand.CanExecute(null));
+        Assert.False(viewModel.SaveCommand.CanExecute(null));
+        Assert.False(viewModel.CancelCommand.CanExecute(null));
+
+        viewModel.ApplyCommand.Execute(null);
+        viewModel.SaveCommand.Execute(null);
+        Assert.Equal(1, application.ApplyCount);
+
+        gate.SetResult();
+        await firstApplication;
+
+        Assert.False(viewModel.IsApplying);
+        Assert.True(viewModel.SaveCommand.CanExecute(null));
+        Assert.True(viewModel.CancelCommand.CanExecute(null));
+    }
+
     private sealed class FakeSettingsApplicationService : ISettingsApplicationService
     {
         public AppSettings Current { get; private set; } = AppSettings.Defaults;
@@ -296,11 +562,12 @@ public sealed class SettingsWindowViewModelTests
         public OverlayDisplayPolicy CurrentDisplayPolicy { get; private set; } =
             OverlayDisplayPolicy.HideOverFullscreenApps;
         internal int ApplyCount { get; private set; }
-        internal Exception? ApplyException { get; init; }
+        internal Exception? ApplyException { get; set; }
+        internal TaskCompletionSource? ApplyGate { get; init; }
         internal (bool, OverlayInteractionMode, OverlayHotKeyGesture,
             OverlayHotKeyGesture, int, bool, OverlaySizeMode,
             OverlayFieldSettings, OverlayDisplayPolicy) LastDraft { get; private set; }
-        public Task<RunAtLoginState> ApplyDraftAsync(
+        public async Task<RunAtLoginState> ApplyDraftAsync(
             bool dashboardVisible,
             OverlayInteractionMode interactionMode,
             OverlayHotKeyGesture interactionHotKey,
@@ -313,15 +580,18 @@ public sealed class SettingsWindowViewModelTests
             CancellationToken cancellationToken = default)
         {
             ApplyCount++;
+            if (ApplyGate is not null)
+            {
+                await ApplyGate.Task.WaitAsync(cancellationToken);
+            }
             if (ApplyException is not null)
             {
-                return Task.FromException<RunAtLoginState>(ApplyException);
+                throw ApplyException;
             }
             fields ??= OverlayFieldSettings.ForMode(sizeMode);
             if (!AppSettingsValidator.TryValidatePresentation(sizeMode, fields, out string? error))
             {
-                return Task.FromException<RunAtLoginState>(
-                    new ArgumentException(error, nameof(fields)));
+                throw new ArgumentException(error, nameof(fields));
             }
             LastDraft = (dashboardVisible, interactionMode, interactionHotKey, visibilityHotKey,
                 samplingIntervalMilliseconds, runAtLoginRequested, sizeMode, fields, displayPolicy);
@@ -337,7 +607,7 @@ public sealed class SettingsWindowViewModelTests
                 Metrics = new MetricsSettings(samplingIntervalMilliseconds),
                 Startup = new StartupSettings(runAtLoginRequested)
             };
-            return Task.FromResult(new RunAtLoginState(runAtLoginRequested, runAtLoginRequested, null));
+            return new RunAtLoginState(runAtLoginRequested, runAtLoginRequested, null);
         }
     }
 }

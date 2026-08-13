@@ -8,6 +8,8 @@ namespace RunCatDashboard.App.ViewModels;
 public sealed partial class SettingsWindowViewModel : ObservableObject
 {
     private readonly ISettingsApplicationService _applicationService;
+    private SettingsDraft _baseline;
+    private bool _isRefreshingDraft;
 
     [ObservableProperty] private bool _isDashboardVisible;
     [ObservableProperty] private OverlayInteractionMode _interactionMode;
@@ -25,6 +27,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     [ObservableProperty] private OverlaySizeMode _sizeMode;
     [ObservableProperty] private OverlayFieldSettings _fields;
     [ObservableProperty] private OverlayDisplayPolicy _requestedDisplayPolicy;
+    [ObservableProperty] private bool _isDirty;
+    [ObservableProperty] private bool _isApplying;
 
     public SettingsWindowViewModel(ISettingsApplicationService applicationService)
     {
@@ -44,12 +48,16 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _sizeMode = settings.Overlay.SizeMode;
         _fields = settings.Overlay.Fields ?? OverlayFieldSettings.ForMode(_sizeMode);
         _requestedDisplayPolicy = applicationService.CurrentDisplayPolicy;
-        SaveCommand = new AsyncRelayCommand(SaveAsync);
-        CancelCommand = new RelayCommand(() =>
-        {
-            EndHotKeyCapture();
-            CloseRequested?.Invoke();
-        });
+        _baseline = CaptureDraft();
+        SaveCommand = new AsyncRelayCommand(SaveAsync, () => !IsApplying);
+        ApplyCommand = new AsyncRelayCommand(ApplyAsync, () => IsDirty && !IsApplying);
+        CancelCommand = new RelayCommand(
+            () =>
+            {
+                EndHotKeyCapture();
+                CloseRequested?.Invoke();
+            },
+            () => !IsApplying);
     }
 
     public IReadOnlyList<int> SamplingIntervals { get; } = [250, 500, 1000, 2000, 5000];
@@ -166,6 +174,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         InteractionHotKey,
         "Dashboard 顯示／隱藏");
     public IAsyncRelayCommand SaveCommand { get; }
+    public IAsyncRelayCommand ApplyCommand { get; }
     public IRelayCommand CancelCommand { get; }
     public event Action? CloseRequested;
 
@@ -213,20 +222,40 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         EndHotKeyCapture();
     }
 
-    private async Task SaveAsync()
+    private Task SaveAsync() => ApplyChangesAsync(closeOnSuccess: true);
+
+    private Task ApplyAsync() => ApplyChangesAsync(closeOnSuccess: false);
+
+    private async Task ApplyChangesAsync(bool closeOnSuccess)
     {
-        EndHotKeyCapture();
-        ValidationError = null;
-        if (!AppSettingsValidator.TryValidatePresentation(
-            SizeMode,
-            Fields,
-            out string? presentationError))
+        if (IsApplying)
         {
-            ValidationError = presentationError;
             return;
         }
+
+        EndHotKeyCapture();
+        if (!IsDirty)
+        {
+            if (closeOnSuccess)
+            {
+                CloseRequested?.Invoke();
+            }
+            return;
+        }
+
+        ValidationError = null;
+        IsApplying = true;
         try
         {
+            if (!AppSettingsValidator.TryValidatePresentation(
+                SizeMode,
+                Fields,
+                out string? presentationError))
+            {
+                ValidationError = presentationError;
+                return;
+            }
+
             var state = await _applicationService.ApplyDraftAsync(
                 IsDashboardVisible,
                 InteractionMode,
@@ -239,13 +268,71 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
                 RequestedDisplayPolicy);
             RunAtLoginApplied = state.Applied;
             StartupFault = state.Fault;
-            CloseRequested?.Invoke();
+            RefreshDraftAndBaselineFromAppliedState();
+            ValidationError = null;
+            if (closeOnSuccess)
+            {
+                CloseRequested?.Invoke();
+            }
         }
         catch (Exception exception) when (
             exception is ArgumentException or HotKeyConfigurationException)
         {
             ValidationError = GetUserFacingValidationMessage(exception);
         }
+        finally
+        {
+            IsApplying = false;
+        }
+    }
+
+    private SettingsDraft CaptureDraft() => new(
+        IsDashboardVisible,
+        InteractionMode,
+        InteractionHotKey,
+        VisibilityHotKey,
+        SamplingIntervalMilliseconds,
+        RunAtLoginRequested,
+        SizeMode,
+        Fields,
+        RequestedDisplayPolicy);
+
+    private void RefreshDraftAndBaselineFromAppliedState()
+    {
+        AppSettings settings = _applicationService.Current;
+        _isRefreshingDraft = true;
+        try
+        {
+            IsDashboardVisible = settings.Window.IsDashboardVisible;
+            InteractionMode = settings.Overlay.InteractionMode;
+            InteractionHotKey = settings.Overlay.InteractionHotKey ??
+                OverlayHotKeyGesture.Default;
+            VisibilityHotKey = settings.Window.VisibilityHotKey ??
+                OverlayHotKeyGesture.DashboardVisibilityDefault;
+            SamplingIntervalMilliseconds = settings.Metrics.SamplingIntervalMilliseconds;
+            RunAtLoginRequested = settings.Startup.RunAtLoginRequested;
+            SizeMode = settings.Overlay.SizeMode;
+            Fields = settings.Overlay.Fields ?? OverlayFieldSettings.ForMode(SizeMode);
+            RequestedDisplayPolicy = _applicationService.CurrentDisplayPolicy;
+        }
+        finally
+        {
+            _isRefreshingDraft = false;
+        }
+
+        _baseline = CaptureDraft();
+        IsDirty = false;
+    }
+
+    private void DraftChanged()
+    {
+        if (_isRefreshingDraft)
+        {
+            return;
+        }
+
+        ValidationError = null;
+        IsDirty = CaptureDraft() != _baseline;
     }
 
     private static string? GetGestureError(
@@ -312,7 +399,6 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 
     partial void OnInteractionHotKeyChanged(OverlayHotKeyGesture value)
     {
-        ValidationError = null;
         OnPropertyChanged(nameof(HotKeyControl));
         OnPropertyChanged(nameof(HotKeyAlt));
         OnPropertyChanged(nameof(HotKeyShift));
@@ -323,11 +409,11 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(HotKeyWarning));
         OnPropertyChanged(nameof(InteractionHotKeyError));
         OnPropertyChanged(nameof(VisibilityHotKeyError));
+        DraftChanged();
     }
 
     partial void OnVisibilityHotKeyChanged(OverlayHotKeyGesture value)
     {
-        ValidationError = null;
         OnPropertyChanged(nameof(VisibilityHotKeyControl));
         OnPropertyChanged(nameof(VisibilityHotKeyAlt));
         OnPropertyChanged(nameof(VisibilityHotKeyShift));
@@ -338,18 +424,18 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(VisibilityHotKeyWarning));
         OnPropertyChanged(nameof(VisibilityHotKeyError));
         OnPropertyChanged(nameof(InteractionHotKeyError));
+        DraftChanged();
     }
 
     partial void OnSizeModeChanged(OverlaySizeMode value)
     {
-        ValidationError = null;
         Fields = OverlayFieldSettings.ForMode(value);
         OnPropertyChanged(nameof(IsFieldSelectionEnabled));
+        DraftChanged();
     }
 
     partial void OnFieldsChanged(OverlayFieldSettings value)
     {
-        ValidationError = null;
         OnPropertyChanged(nameof(ShowCpu));
         OnPropertyChanged(nameof(ShowMemory));
         OnPropertyChanged(nameof(ShowUsedAndTotalMemory));
@@ -358,5 +444,32 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowRecentCpuHistory));
         OnPropertyChanged(nameof(ShowInteractionMode));
         OnPropertyChanged(nameof(ShowHotKeyHints));
+        DraftChanged();
     }
+
+    partial void OnIsDashboardVisibleChanged(bool value) => DraftChanged();
+    partial void OnInteractionModeChanged(OverlayInteractionMode value) => DraftChanged();
+    partial void OnSamplingIntervalMillisecondsChanged(int value) => DraftChanged();
+    partial void OnRunAtLoginRequestedChanged(bool value) => DraftChanged();
+    partial void OnRequestedDisplayPolicyChanged(OverlayDisplayPolicy value) => DraftChanged();
+
+    partial void OnIsDirtyChanged(bool value) => ApplyCommand.NotifyCanExecuteChanged();
+
+    partial void OnIsApplyingChanged(bool value)
+    {
+        SaveCommand.NotifyCanExecuteChanged();
+        ApplyCommand.NotifyCanExecuteChanged();
+        CancelCommand.NotifyCanExecuteChanged();
+    }
+
+    private sealed record SettingsDraft(
+        bool IsDashboardVisible,
+        OverlayInteractionMode InteractionMode,
+        OverlayHotKeyGesture InteractionHotKey,
+        OverlayHotKeyGesture VisibilityHotKey,
+        int SamplingIntervalMilliseconds,
+        bool RunAtLoginRequested,
+        OverlaySizeMode SizeMode,
+        OverlayFieldSettings Fields,
+        OverlayDisplayPolicy DisplayPolicy);
 }
