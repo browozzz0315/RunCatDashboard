@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
@@ -30,6 +31,18 @@ public partial class SettingsWindow : Window, ISettingsWindowHost
         base.OnSourceInitialized(e);
         _windowSource = PresentationSource.FromVisual(this) as HwndSource;
         _windowSource?.AddHook(OnWindowMessage);
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        if (_viewModel.IsApplying)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        _viewModel.EndHotKeyCapture();
+        base.OnClosing(e);
     }
 
     protected override void OnClosed(EventArgs e)

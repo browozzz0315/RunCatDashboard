@@ -155,8 +155,14 @@ Dashboard hidden 時也能開啟，關閉它不會退出 App。
 
 每次開啟從 current settings 建立兩組快捷鍵、size mode、單一 fields 與 runtime
 fullscreen policy draft。切換成另一個 size mode 時套用該 mode defaults；同 mode
-重複指定不清除目前 draft，defaults 套用後仍可修改欄位。取消只關閉且不套用；儲存先驗證
-兩組及彼此不得相同，再要求 Windows-specific controller 分別套用。每組相同新舊值是
+重複指定不清除目前 draft，defaults 套用後仍可修改欄位。Settings Window 以最新成功套用值
+作為 baseline，所有可編輯值以單一結構化 draft 比較 dirty state。Apply 只在 dirty 且非套用中
+啟用；成功時保持視窗開啟、以實際 commit／merge 後的 current settings 更新 baseline 並清除
+dirty 與舊錯誤。Save 與 Apply 共用相同驗證及 application pipeline；dirty Save 成功後關閉，
+clean Save 不重複保存而直接關閉。Cancel 與標題列 X 只捨棄最新 baseline 後的 draft 並關閉，
+不 rollback 先前成功的 Apply。套用中會停用三個動作並暫時阻止標題列關閉，避免重疊交易。
+Apply／dirty Save 先驗證兩組快捷鍵及彼此不得相同，再要求 Windows-specific controller
+分別套用。每組相同新舊值是
 no-op；不同值只解除及註冊該組，新組合失敗時 rollback 該組原值且不更新 current 或
 JSON。兩組 native 套用完成後，以 atomic write 保存完整 candidate；保存失敗時 rollback
 已套用的 gesture，current snapshot、requested visibility、interaction mode、sampling 與
