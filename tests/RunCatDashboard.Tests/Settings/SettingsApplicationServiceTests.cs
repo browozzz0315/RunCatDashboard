@@ -5,6 +5,7 @@ using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.Settings;
 using RunCatDashboard.App.Startup;
+using RunCatDashboard.App.Theming;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Windowing;
 
@@ -12,6 +13,198 @@ namespace RunCatDashboard.Tests.Settings;
 
 public sealed class SettingsApplicationServiceTests
 {
+    [Fact]
+    public async Task ApplyDraft_ThemePreferenceUsesSamePersistencePipelineAndAppliesOnce()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations);
+        var theme = new FakeThemeCoordinator();
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = new SettingsApplicationService(
+            settings,
+            new WindowVisibilityCoordinator(),
+            new FakeInteractionAction(),
+            new FakeHotKeyController(operations),
+            mainViewModel,
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher(),
+            theme);
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            1000,
+            false,
+            themePreference: ThemePreference.Dark);
+
+        Assert.Equal(1, theme.ApplyCount);
+        Assert.Equal(ThemePreference.Dark, settings.Current.Appearance.ThemePreference);
+        Assert.Equal(["save-settings"], operations);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_PersistenceFailureDoesNotApplyTheme()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations) { SaveSucceeds = false };
+        var theme = new FakeThemeCoordinator();
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = new SettingsApplicationService(
+            settings,
+            new WindowVisibilityCoordinator(),
+            new FakeInteractionAction(),
+            new FakeHotKeyController(operations),
+            mainViewModel,
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher(),
+            theme);
+
+        await Assert.ThrowsAsync<HotKeyConfigurationException>(() => service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            1000,
+            false,
+            themePreference: ThemePreference.Dark));
+
+        Assert.Equal(0, theme.ApplyCount);
+        Assert.Equal(ThemePreference.System, settings.Current.Appearance.ThemePreference);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_ThemeFailureRestoresPersistedPreferenceAndHotKeys()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations);
+        var theme = new FakeThemeCoordinator
+        {
+            ApplyException = new ThemeConfigurationException("theme failure")
+        };
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = new SettingsApplicationService(
+            settings,
+            new WindowVisibilityCoordinator(),
+            new FakeInteractionAction(),
+            new FakeHotKeyController(operations),
+            mainViewModel,
+            new FakeRunAtLoginService(),
+            new ImmediateDispatcher(),
+            theme);
+
+        await Assert.ThrowsAsync<ThemeConfigurationException>(() => service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            1000,
+            false,
+            themePreference: ThemePreference.Dark));
+
+        Assert.Equal(ThemePreference.System, settings.Current.Appearance.ThemePreference);
+        Assert.Equal(ThemePreference.System, settings.PersistedSettings.Last().Appearance.ThemePreference);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_ThemeFailureRollsBackAllDraftSettingsAndPreservesConcurrentPosition()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations)
+        {
+            BeforeReplacement = current => current with
+            {
+                Window = current.Window with { Left = -320, Top = 80 }
+            }
+        };
+        var theme = new FakeThemeCoordinator
+        {
+            ApplyException = new ThemeConfigurationException("theme failure")
+        };
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(
+            settings,
+            new FakeHotKeyController(operations),
+            mainViewModel,
+            theme);
+
+        await Assert.ThrowsAsync<ThemeConfigurationException>(() => service.ApplyDraftAsync(
+            false,
+            OverlayInteractionMode.Interactive,
+            OverlayHotKeyGesture.Default,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            500,
+            true,
+            OverlaySizeMode.Compact,
+            OverlayFieldSettings.ForMode(OverlaySizeMode.Compact),
+            themePreference: ThemePreference.Dark));
+
+        AppSettings current = settings.Current;
+        Assert.Equal(-320, current.Window.Left);
+        Assert.Equal(80, current.Window.Top);
+        Assert.True(current.Window.IsDashboardVisible);
+        Assert.Equal(OverlayInteractionMode.ClickThrough, current.Overlay.InteractionMode);
+        Assert.Equal(OverlaySizeMode.Standard, current.Overlay.SizeMode);
+        Assert.Equal(OverlayFieldSettings.ForMode(OverlaySizeMode.Standard), current.Overlay.Fields);
+        Assert.Equal(1000, current.Metrics.SamplingIntervalMilliseconds);
+        Assert.False(current.Startup.RunAtLoginRequested);
+        Assert.Equal(ThemePreference.System, current.Appearance.ThemePreference);
+        Assert.Equal(current, settings.PersistedSettings.Last());
+    }
+
+    [Fact]
+    public async Task ApplyDraft_ConcurrentThemeWinsWhenDraftDidNotChangeIt()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations)
+        {
+            BeforeReplacement = current => current with
+            {
+                Appearance = new AppearanceSettings(ThemePreference.Dark)
+            }
+        };
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, new FakeHotKeyController(operations), mainViewModel);
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            1000,
+            false,
+            themePreference: ThemePreference.System);
+
+        Assert.Equal(ThemePreference.Dark, settings.Current.Appearance.ThemePreference);
+    }
+
+    [Fact]
+    public async Task ApplyDraft_ExplicitThemeDraftWinsOverConcurrentTheme()
+    {
+        var operations = new List<string>();
+        var settings = new FakeSettingsService(operations)
+        {
+            BeforeReplacement = current => current with
+            {
+                Appearance = new AppearanceSettings(ThemePreference.Dark)
+            }
+        };
+        await using MainWindowViewModel mainViewModel = CreateMainViewModel();
+        var service = CreateService(settings, new FakeHotKeyController(operations), mainViewModel);
+
+        await service.ApplyDraftAsync(
+            true,
+            OverlayInteractionMode.ClickThrough,
+            OverlayHotKeyGesture.Default,
+            OverlayHotKeyGesture.DashboardVisibilityDefault,
+            1000,
+            false,
+            themePreference: ThemePreference.Light);
+
+        Assert.Equal(ThemePreference.Light, settings.Current.Appearance.ThemePreference);
+    }
+
     [Fact]
     public async Task ApplyDraft_NewViewModelUsesSavedInteractionHotKey()
     {
@@ -760,14 +953,16 @@ public sealed class SettingsApplicationServiceTests
     private static SettingsApplicationService CreateService(
         ISettingsService settings,
         IGlobalHotKeyController hotKeys,
-        MainWindowViewModel mainViewModel) => new(
+        MainWindowViewModel mainViewModel,
+        IThemeCoordinator? themeCoordinator = null) => new(
             settings,
             new WindowVisibilityCoordinator(),
             new FakeInteractionAction(),
             hotKeys,
             mainViewModel,
             new FakeRunAtLoginService(),
-            new ImmediateDispatcher());
+            new ImmediateDispatcher(),
+            themeCoordinator);
 
     private static MainWindowViewModel CreateMainViewModel() => new(
         new NoOpMetricsService(),
@@ -816,6 +1011,34 @@ public sealed class SettingsApplicationServiceTests
             return Task.CompletedTask;
         }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class FakeThemeCoordinator : IThemeCoordinator
+    {
+        public ThemePreference ThemePreference { get; private set; } = ThemePreference.System;
+        public ResolvedTheme ResolvedTheme { get; private set; } = ResolvedTheme.Light;
+        internal int ApplyCount { get; private set; }
+        internal Exception? ApplyException { get; init; }
+        public event Action<ResolvedTheme>? ResolvedThemeChanged;
+
+        public Task ApplyPreferenceAsync(
+            ThemePreference preference,
+            CancellationToken cancellationToken = default)
+        {
+            ApplyCount++;
+            if (ApplyException is not null)
+            {
+                return Task.FromException(ApplyException);
+            }
+            ThemePreference = preference;
+            ResolvedTheme = preference == RunCatDashboard.App.Settings.ThemePreference.Dark
+                ? RunCatDashboard.App.Theming.ResolvedTheme.Dark
+                : RunCatDashboard.App.Theming.ResolvedTheme.Light;
+            ResolvedThemeChanged?.Invoke(ResolvedTheme);
+            return Task.CompletedTask;
+        }
+
+        public void Dispose() { }
     }
 
     private sealed class FakeHotKeyController(List<string> operations) : IGlobalHotKeyController

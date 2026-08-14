@@ -5,9 +5,17 @@
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         PreviewMouseDown="OnWindowPreviewMouseDown"
         Deactivated="OnWindowDeactivated"
-        ShowInTaskbar="True">
+        ShowInTaskbar="True"
+        Style="{DynamicResource ThemeWindowStyle}">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <Style TargetType="{x:Type GroupBox}" BasedOn="{StaticResource ThemeGroupBoxStyle}" />
+        <Style TargetType="{x:Type ComboBox}" BasedOn="{StaticResource ThemeComboBoxStyle}" />
+        <Style TargetType="{x:Type CheckBox}" BasedOn="{StaticResource ThemeCheckBoxStyle}" />
+        <Style TargetType="{x:Type Button}" BasedOn="{StaticResource ThemeButtonStyle}" />
+        <Style TargetType="{x:Type TextBox}" BasedOn="{StaticResource ThemeTextBoxStyle}" />
+        <Style TargetType="{x:Type TextBlock}" BasedOn="{StaticResource ThemeTextBlockStyle}" />
+        <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource ThemeScrollBarStyle}" />
     </Window.Resources>
     <Grid Margin="20">
         <Grid.RowDefinitions>
@@ -25,6 +33,15 @@
                     <TextBlock Text="互動模式" Margin="0,0,0,4" />
                     <ComboBox ItemsSource="{Binding InteractionModes}"
                               SelectedItem="{Binding InteractionMode}" />
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="外觀" Padding="12" Margin="0,0,0,12"
+                      Style="{DynamicResource ThemeGroupBoxStyle}">
+                <StackPanel>
+                    <TextBlock Text="主題" Margin="0,0,0,4" />
+                    <ComboBox ItemsSource="{Binding ThemePreferences}"
+                              SelectedItem="{Binding ThemePreference}"
+                              Style="{DynamicResource ThemeComboBoxStyle}" />
                 </StackPanel>
             </GroupBox>
             <GroupBox Header="Overlay 顯示" Padding="12" Margin="0,0,0,12">
@@ -49,7 +66,7 @@
                         <CheckBox Content="快捷鍵提示" IsChecked="{Binding ShowHotKeyHints}" Margin="0,0,16,8" />
                     </WrapPanel>
                     <TextBlock Text="Compact、Standard 與 Expanded 至少需要顯示 CPU 或 Memory；CatOnly 只顯示貓咪動畫。"
-                               Foreground="DimGray" TextWrapping="Wrap" />
+                               Foreground="{DynamicResource AppMutedTextBrush}" TextWrapping="Wrap" />
                 </StackPanel>
             </GroupBox>
             <GroupBox Header="Overlay 模式快捷鍵" Padding="12" Margin="0,0,0,12">
@@ -77,12 +94,12 @@
                              ToolTip="點選後按下 A-Z、0-9 或 F1-F12；Esc 取消。"
                              Padding="6,4">
                         <TextBox.Style>
-                            <Style TargetType="TextBox">
-                                <Setter Property="BorderBrush" Value="Gray" />
+                            <Style TargetType="TextBox" BasedOn="{StaticResource ThemeTextBoxStyle}">
+                                <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
                                 <Setter Property="BorderThickness" Value="1" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsHotKeyCaptureActive}" Value="True">
-                                        <Setter Property="BorderBrush" Value="DodgerBlue" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource AppAccentBrush}" />
                                         <Setter Property="BorderThickness" Value="3" />
                                         <Setter Property="FontWeight" Value="SemiBold" />
                                     </DataTrigger>
@@ -92,10 +109,10 @@
                     </TextBox>
                     <TextBlock Text="請按下 A-Z、0-9 或 F1-F12；Esc 取消"
                                Visibility="{Binding IsHotKeyCaptureActive, Converter={StaticResource BooleanToVisibilityConverter}}"
-                               Foreground="DodgerBlue" FontWeight="SemiBold"
+                               Foreground="{DynamicResource AppAccentBrush}" FontWeight="SemiBold"
                                TextWrapping="Wrap" Margin="0,6,0,0" />
                     <TextBlock Text="點選欄位以擷取主要按鍵。"
-                               Foreground="DimGray" TextWrapping="Wrap" Margin="0,4,0,0">
+                               Foreground="{DynamicResource AppMutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -108,17 +125,17 @@
                         </TextBlock.Style>
                     </TextBlock>
                     <TextBlock Text="{Binding HotKeyCaptureMessage}"
-                               Foreground="DarkRed" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource AppErrorBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                     <TextBlock Margin="0,8,0,0">
                         <Run Text="目前組合：" />
                         <Run Text="{Binding InteractionHotKeyDisplayText, Mode=OneWay}" />
                     </TextBlock>
                     <TextBlock Text="{Binding HotKeyWarning}"
-                               Foreground="DarkOrange" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource AppWarningBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                     <TextBlock Text="{Binding InteractionHotKeyError}"
-                               Foreground="DarkRed" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource AppErrorBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                     <TextBlock Text="至少選擇一個 modifier；系統保留快捷鍵不可使用。"
-                               Foreground="DimGray" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource AppMutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                 </StackPanel>
             </GroupBox>
             <GroupBox Header="Dashboard 顯示／隱藏快捷鍵" Padding="12" Margin="0,0,0,12">
@@ -148,12 +165,12 @@
                              ToolTip="點選後按下 A-Z、0-9 或 F1-F12；Esc 取消。"
                              Padding="6,4">
                         <TextBox.Style>
-                            <Style TargetType="TextBox">
-                                <Setter Property="BorderBrush" Value="Gray" />
+                            <Style TargetType="TextBox" BasedOn="{StaticResource ThemeTextBoxStyle}">
+                                <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
                                 <Setter Property="BorderThickness" Value="1" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsVisibilityHotKeyCaptureActive}" Value="True">
-                                        <Setter Property="BorderBrush" Value="DodgerBlue" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource AppAccentBrush}" />
                                         <Setter Property="BorderThickness" Value="3" />
                                         <Setter Property="FontWeight" Value="SemiBold" />
                                     </DataTrigger>
@@ -163,20 +180,20 @@
                     </TextBox>
                     <TextBlock Text="請按下 A-Z、0-9 或 F1-F12；Esc 取消"
                                Visibility="{Binding IsVisibilityHotKeyCaptureActive, Converter={StaticResource BooleanToVisibilityConverter}}"
-                               Foreground="DodgerBlue" FontWeight="SemiBold"
+                               Foreground="{DynamicResource AppAccentBrush}" FontWeight="SemiBold"
                                TextWrapping="Wrap" Margin="0,6,0,0" />
                     <TextBlock Text="{Binding VisibilityHotKeyCaptureMessage}"
-                               Foreground="DarkRed" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource AppErrorBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                     <TextBlock Margin="0,8,0,0">
                         <Run Text="目前組合：" />
                         <Run Text="{Binding VisibilityHotKeyDisplayText, Mode=OneWay}" />
                     </TextBlock>
                     <TextBlock Text="{Binding VisibilityHotKeyWarning}"
-                               Foreground="DarkOrange" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource AppWarningBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                     <TextBlock Text="{Binding VisibilityHotKeyError}"
-                               Foreground="DarkRed" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource AppErrorBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                     <TextBlock Text="至少選擇一個 modifier；系統保留快捷鍵不可使用。"
-                               Foreground="DimGray" TextWrapping="Wrap" Margin="0,4,0,0" />
+                               Foreground="{DynamicResource AppMutedTextBrush}" TextWrapping="Wrap" Margin="0,4,0,0" />
                 </StackPanel>
             </GroupBox>
             <GroupBox Header="效能" Padding="12" Margin="0,0,0,12">
@@ -193,21 +210,24 @@
                     <TextBlock Margin="0,8,0,0">
                         <Run Text="Applied：" /><Run Text="{Binding RunAtLoginApplied}" />
                     </TextBlock>
-                    <TextBlock Text="{Binding StartupFault}" Foreground="DarkRed"
+                    <TextBlock Text="{Binding StartupFault}" Foreground="{DynamicResource AppErrorBrush}"
                                TextWrapping="Wrap" Margin="0,4,0,0" />
                 </StackPanel>
             </GroupBox>
         </StackPanel>
         </ScrollViewer>
         <TextBlock x:Name="ValidationErrorTextBlock" Grid.Row="1"
-                   Text="{Binding ValidationError}" Foreground="DarkRed"
+                   Text="{Binding ValidationError}" Foreground="{DynamicResource AppErrorBrush}"
                    FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,10,0,8" />
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="儲存" Command="{Binding SaveCommand}" MinWidth="80"
-                    IsDefault="True" Margin="0,0,8,0" />
+                    IsDefault="True" Margin="0,0,8,0"
+                    Style="{DynamicResource ThemeButtonStyle}" />
             <Button Content="取消" Command="{Binding CancelCommand}" MinWidth="80"
-                    IsCancel="True" Margin="0,0,8,0" />
-            <Button Content="套用" Command="{Binding ApplyCommand}" MinWidth="80" />
+                    IsCancel="True" Margin="0,0,8,0"
+                    Style="{DynamicResource ThemeButtonStyle}" />
+            <Button Content="套用" Command="{Binding ApplyCommand}" MinWidth="80"
+                    Style="{DynamicResource ThemeButtonStyle}" />
         </StackPanel>
     </Grid>
 </Window>

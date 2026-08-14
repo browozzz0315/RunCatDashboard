@@ -60,6 +60,6 @@ public sealed class LoggingPolicyTests
     [Fact]
     public void DiagnosticLogging_DoesNotChangeSettingsSchemaVersion()
     {
-        Assert.Equal(4, AppSettings.CurrentVersion);
+        Assert.Equal(5, AppSettings.CurrentVersion);
     }
 }

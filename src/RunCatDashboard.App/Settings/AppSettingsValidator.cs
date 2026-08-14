@@ -54,6 +54,10 @@ public static class AppSettingsValidator
             AllowedSamplingIntervals.Contains(settings.Metrics.SamplingIntervalMilliseconds)
                 ? settings.Metrics.SamplingIntervalMilliseconds
                 : defaults.Metrics.SamplingIntervalMilliseconds;
+        ThemePreference themePreference = settings.Appearance is not null &&
+            Enum.IsDefined(settings.Appearance.ThemePreference)
+                ? settings.Appearance.ThemePreference
+                : ThemePreference.System;
 
         return new AppSettings(
             AppSettings.CurrentVersion,
@@ -64,7 +68,10 @@ public static class AppSettingsValidator
                 visibilityHotKey),
             new OverlaySettings(mode, hotKey, sizeMode, fields),
             new MetricsSettings(interval),
-            new StartupSettings(settings.Startup?.RunAtLoginRequested ?? false));
+            new StartupSettings(settings.Startup?.RunAtLoginRequested ?? false))
+        {
+            Appearance = new AppearanceSettings(themePreference)
+        };
     }
 
     private static bool IsFinite(double? value) =>

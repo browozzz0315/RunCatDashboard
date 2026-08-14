@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using RunCatDashboard.App.Settings;
+using RunCatDashboard.App.Theming;
 using RunCatDashboard.App.Windowing;
 
 namespace RunCatDashboard.App.ViewModels;
@@ -27,6 +28,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     [ObservableProperty] private OverlaySizeMode _sizeMode;
     [ObservableProperty] private OverlayFieldSettings _fields;
     [ObservableProperty] private OverlayDisplayPolicy _requestedDisplayPolicy;
+    [ObservableProperty] private ThemePreference _themePreference;
     [ObservableProperty] private bool _isDirty;
     [ObservableProperty] private bool _isApplying;
 
@@ -48,6 +50,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _sizeMode = settings.Overlay.SizeMode;
         _fields = settings.Overlay.Fields ?? OverlayFieldSettings.ForMode(_sizeMode);
         _requestedDisplayPolicy = applicationService.CurrentDisplayPolicy;
+        _themePreference = settings.Appearance.ThemePreference;
         _baseline = CaptureDraft();
         SaveCommand = new AsyncRelayCommand(SaveAsync, () => !IsApplying);
         ApplyCommand = new AsyncRelayCommand(ApplyAsync, () => IsDirty && !IsApplying);
@@ -67,6 +70,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         Enum.GetValues<OverlaySizeMode>();
     public IReadOnlyList<OverlayDisplayPolicy> DisplayPolicies { get; } =
         Enum.GetValues<OverlayDisplayPolicy>();
+    public IReadOnlyList<ThemePreference> ThemePreferences { get; } =
+        Enum.GetValues<ThemePreference>();
     public bool IsFieldSelectionEnabled => SizeMode != OverlaySizeMode.CatOnly;
     public bool ShowCpu
     {
@@ -265,7 +270,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
                 RunAtLoginRequested,
                 SizeMode,
                 Fields,
-                RequestedDisplayPolicy);
+                RequestedDisplayPolicy,
+                ThemePreference);
             RunAtLoginApplied = state.Applied;
             StartupFault = state.Fault;
             RefreshDraftAndBaselineFromAppliedState();
@@ -276,7 +282,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
             }
         }
         catch (Exception exception) when (
-            exception is ArgumentException or HotKeyConfigurationException)
+            exception is ArgumentException or HotKeyConfigurationException or
+                ThemeConfigurationException)
         {
             ValidationError = GetUserFacingValidationMessage(exception);
         }
@@ -295,7 +302,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         RunAtLoginRequested,
         SizeMode,
         Fields,
-        RequestedDisplayPolicy);
+        RequestedDisplayPolicy,
+        ThemePreference);
 
     private void RefreshDraftAndBaselineFromAppliedState()
     {
@@ -314,6 +322,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
             SizeMode = settings.Overlay.SizeMode;
             Fields = settings.Overlay.Fields ?? OverlayFieldSettings.ForMode(SizeMode);
             RequestedDisplayPolicy = _applicationService.CurrentDisplayPolicy;
+            ThemePreference = settings.Appearance.ThemePreference;
         }
         finally
         {
@@ -353,6 +362,11 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     private static string GetUserFacingValidationMessage(Exception exception)
     {
         if (exception is HotKeyConfigurationException)
+        {
+            return exception.Message;
+        }
+
+        if (exception is ThemeConfigurationException)
         {
             return exception.Message;
         }
@@ -452,6 +466,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     partial void OnSamplingIntervalMillisecondsChanged(int value) => DraftChanged();
     partial void OnRunAtLoginRequestedChanged(bool value) => DraftChanged();
     partial void OnRequestedDisplayPolicyChanged(OverlayDisplayPolicy value) => DraftChanged();
+    partial void OnThemePreferenceChanged(ThemePreference value) => DraftChanged();
 
     partial void OnIsDirtyChanged(bool value) => ApplyCommand.NotifyCanExecuteChanged();
 
@@ -471,5 +486,6 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         bool RunAtLoginRequested,
         OverlaySizeMode SizeMode,
         OverlayFieldSettings Fields,
-        OverlayDisplayPolicy DisplayPolicy);
+        OverlayDisplayPolicy DisplayPolicy,
+        ThemePreference ThemePreference);
 }

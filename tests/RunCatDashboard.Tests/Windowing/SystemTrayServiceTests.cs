@@ -1,6 +1,7 @@
 using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Windowing;
+using RunCatDashboard.App.Theming;
 
 namespace RunCatDashboard.Tests.Windowing;
 
@@ -242,6 +243,7 @@ public sealed class SystemTrayServiceTests
         public event Action? ExitRequested;
         public bool CanUseAnimatedIcons { get; set; } = true;
         public string? AnimationIconLoadError { get; set; }
+        public void SetResolvedTheme(ResolvedTheme theme) { }
         internal string? VisibilityText { get; private set; }
         internal string? InteractionText { get; private set; }
         internal string? AnimationText { get; private set; }

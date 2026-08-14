@@ -9,6 +9,7 @@ using RunCatDashboard.App.Diagnostics;
 using RunCatDashboard.App.Models;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.Settings;
+using RunCatDashboard.App.Theming;
 using RunCatDashboard.App.Windowing;
 
 namespace RunCatDashboard.App.ViewModels;
@@ -24,6 +25,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private readonly IRunCatAnimationController _animationController;
     private readonly BoundedHistory<SystemMetricsSnapshot> _cpuHistoryBuffer;
     private readonly ILogger<MainWindowViewModel> _logger;
+    private readonly IThemeCoordinator? _themeCoordinator;
     private readonly FaultEpisodeTracker _samplingFaultEpisode = new();
     private long _samplingIntervalTicks;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
@@ -114,6 +116,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     [ObservableProperty]
     private string _hotKeyHintsText = string.Empty;
 
+    [ObservableProperty]
+    private ResolvedTheme _resolvedTheme = ResolvedTheme.Light;
+
     public event Action<OverlayDisplayPolicy>? DisplayPolicyRequested;
 
     public IReadOnlyList<OverlayDisplayPolicy> DisplayPolicies { get; } =
@@ -168,7 +173,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         ISystemMetricsService systemMetricsService,
         IUiDispatcher uiDispatcher,
         IRunCatAnimationController animationController,
-        ILogger<MainWindowViewModel>? logger = null)
+        ILogger<MainWindowViewModel>? logger = null,
+        IThemeCoordinator? themeCoordinator = null)
         : this(
             systemMetricsService,
             uiDispatcher,
@@ -176,7 +182,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
             DefaultCpuHistoryCapacity,
             DefaultSamplingInterval,
             Task.Delay,
-            logger)
+            logger,
+            themeCoordinator)
     {
     }
 
@@ -187,7 +194,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         int cpuHistoryCapacity,
         TimeSpan samplingInterval,
         Func<TimeSpan, CancellationToken, Task> delayAsync,
-        ILogger<MainWindowViewModel>? logger = null)
+        ILogger<MainWindowViewModel>? logger = null,
+        IThemeCoordinator? themeCoordinator = null)
     {
         ArgumentNullException.ThrowIfNull(systemMetricsService);
         ArgumentNullException.ThrowIfNull(uiDispatcher);
@@ -201,10 +209,16 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         _cpuHistoryBuffer = new BoundedHistory<SystemMetricsSnapshot>(cpuHistoryCapacity);
         _samplingIntervalTicks = samplingInterval.Ticks;
         _delayAsync = delayAsync;
+        _themeCoordinator = themeCoordinator;
         _logger = logger ??
             Microsoft.Extensions.Logging.Abstractions.NullLogger<MainWindowViewModel>.Instance;
         _animationController.FrameChanged += OnAnimationFrameChanged;
         _animationController.Faulted += OnAnimationFaulted;
+        if (_themeCoordinator is not null)
+        {
+            ResolvedTheme = _themeCoordinator.ResolvedTheme;
+            _themeCoordinator.ResolvedThemeChanged += OnThemeCoordinatorResolvedThemeChanged;
+        }
         _animationController.UpdateInterval(CpuAnimationSpeedMapper.SlowestInterval);
     }
 
@@ -394,6 +408,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
         _animationController.FrameChanged -= OnAnimationFrameChanged;
         _animationController.Faulted -= OnAnimationFaulted;
+        if (_themeCoordinator is not null)
+        {
+            _themeCoordinator.ResolvedThemeChanged -= OnThemeCoordinatorResolvedThemeChanged;
+        }
         _animationController.Dispose();
         await StopAsync().ConfigureAwait(false);
     }
@@ -560,6 +578,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private void OnAnimationFaulted(string message)
     {
         AnimationErrorMessage = "Run Cat 動畫暫時發生錯誤。";
+    }
+
+    private void OnThemeCoordinatorResolvedThemeChanged(ResolvedTheme theme)
+    {
+        ResolvedTheme = theme;
     }
 
     private void ApplySamplingError(Exception exception)

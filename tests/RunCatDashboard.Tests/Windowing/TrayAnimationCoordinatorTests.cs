@@ -2,6 +2,8 @@ using RunCatDashboard.App.Animation;
 using Microsoft.Extensions.Logging;
 using RunCatDashboard.Tests.Diagnostics;
 using RunCatDashboard.App.Windowing;
+using RunCatDashboard.App.Settings;
+using RunCatDashboard.App.Theming;
 
 namespace RunCatDashboard.Tests.Windowing;
 
@@ -141,6 +143,44 @@ public sealed class TrayAnimationCoordinatorTests
     }
 
     [Fact]
+    public void ResolvedThemeChanged_SwitchesTraySourceWithoutResettingFrame()
+    {
+        var adapter = new FakeTrayIconAdapter();
+        var animation = new FakeRunCatAnimationController { FrameIndex = 5 };
+        var theme = new FakeThemeCoordinator(ResolvedTheme.Light);
+        using var coordinator = new TrayAnimationCoordinator(
+            adapter,
+            animation,
+            themeCoordinator: theme);
+
+        coordinator.Initialize();
+        theme.Publish(ResolvedTheme.Dark);
+
+        Assert.Equal(ResolvedTheme.Dark, adapter.ResolvedTheme);
+        Assert.Equal(5, adapter.LastAnimatedFrame);
+        Assert.Equal(2, adapter.AnimatedUpdateCount);
+        Assert.Equal(0, animation.StartCount);
+        Assert.Equal(0, animation.StopCount);
+    }
+
+    [Fact]
+    public void Initialize_UsesCurrentResolvedThemeForInitialTrayIcon()
+    {
+        var adapter = new FakeTrayIconAdapter();
+        var animation = new FakeRunCatAnimationController { FrameIndex = 2 };
+        var theme = new FakeThemeCoordinator(ResolvedTheme.Dark);
+        using var coordinator = new TrayAnimationCoordinator(
+            adapter,
+            animation,
+            themeCoordinator: theme);
+
+        coordinator.Initialize();
+
+        Assert.Equal(ResolvedTheme.Dark, adapter.ResolvedTheme);
+        Assert.Equal(2, adapter.LastAnimatedFrame);
+    }
+
+    [Fact]
     public void ApplicationAssembly_HasOnlyOneAnimationTimerImplementation()
     {
         Type[] implementations = typeof(IRunCatAnimationController).Assembly
@@ -164,10 +204,13 @@ public sealed class TrayAnimationCoordinatorTests
         public event Action? ExitRequested { add { } remove { } }
         public bool CanUseAnimatedIcons { get; set; } = true;
         public string? AnimationIconLoadError { get; set; }
+        internal ResolvedTheme ResolvedTheme { get; private set; } = ResolvedTheme.Light;
         internal int? LastAnimatedFrame { get; private set; }
         internal int AnimatedUpdateCount { get; private set; }
         internal bool IsStatic { get; set; }
         internal Exception? FrameFailure { get; set; }
+
+        public void SetResolvedTheme(ResolvedTheme theme) => ResolvedTheme = theme;
 
         public void SetAnimatedFrame(int frameIndex)
         {
@@ -186,6 +229,26 @@ public sealed class TrayAnimationCoordinatorTests
         public void SetMenuText(string visibilityText, string interactionText, string animationText) { }
         public void RecoverAfterExplorerRestart() { }
         public void Dispose() { }
+    }
+
+    private sealed class FakeThemeCoordinator(ResolvedTheme initialTheme) : IThemeCoordinator
+    {
+        public ThemePreference ThemePreference => ThemePreference.System;
+        public ResolvedTheme ResolvedTheme { get; private set; } = initialTheme;
+        public event Action<ResolvedTheme>? ResolvedThemeChanged;
+
+        public Task ApplyPreferenceAsync(
+            ThemePreference preference,
+            CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public void Publish(ResolvedTheme theme)
+        {
+            ResolvedTheme = theme;
+            ResolvedThemeChanged?.Invoke(theme);
+        }
+
+        public void Dispose() => ResolvedThemeChanged = null;
     }
 
     private sealed class FakeRunCatAnimationController : IRunCatAnimationController

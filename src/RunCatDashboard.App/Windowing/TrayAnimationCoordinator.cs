@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Diagnostics;
+using RunCatDashboard.App.Theming;
 
 namespace RunCatDashboard.App.Windowing;
 
@@ -23,6 +24,7 @@ internal sealed class TrayAnimationCoordinator : ITrayAnimationCoordinator
 {
     private readonly ITrayIconAdapter _adapter;
     private readonly IRunCatAnimationController _animationController;
+    private readonly IThemeCoordinator? _themeCoordinator;
     private readonly ILogger<TrayAnimationCoordinator> _logger;
     private readonly FaultEpisodeTracker _frameFaultEpisode = new();
     private bool _isInitialized;
@@ -31,12 +33,14 @@ internal sealed class TrayAnimationCoordinator : ITrayAnimationCoordinator
     internal TrayAnimationCoordinator(
         ITrayIconAdapter adapter,
         IRunCatAnimationController animationController,
-        ILogger<TrayAnimationCoordinator>? logger = null)
+        ILogger<TrayAnimationCoordinator>? logger = null,
+        IThemeCoordinator? themeCoordinator = null)
     {
         ArgumentNullException.ThrowIfNull(adapter);
         ArgumentNullException.ThrowIfNull(animationController);
         _adapter = adapter;
         _animationController = animationController;
+        _themeCoordinator = themeCoordinator;
         _logger = logger ??
             Microsoft.Extensions.Logging.Abstractions.NullLogger<TrayAnimationCoordinator>.Instance;
     }
@@ -53,6 +57,12 @@ internal sealed class TrayAnimationCoordinator : ITrayAnimationCoordinator
         if (_isInitialized)
         {
             return false;
+        }
+
+        if (_themeCoordinator is not null)
+        {
+            _adapter.SetResolvedTheme(_themeCoordinator.ResolvedTheme);
+            _themeCoordinator.ResolvedThemeChanged += OnResolvedThemeChanged;
         }
 
         _animationController.FrameChanged += OnFrameChanged;
@@ -86,6 +96,11 @@ internal sealed class TrayAnimationCoordinator : ITrayAnimationCoordinator
         if (_isInitialized)
         {
             _animationController.FrameChanged -= OnFrameChanged;
+            if (_themeCoordinator is not null)
+            {
+                _themeCoordinator.ResolvedThemeChanged -= OnResolvedThemeChanged;
+            }
+
             _isInitialized = false;
         }
 
@@ -100,6 +115,25 @@ internal sealed class TrayAnimationCoordinator : ITrayAnimationCoordinator
         }
 
         TrySetAnimatedFrame(frameIndex);
+    }
+
+    private void OnResolvedThemeChanged(ResolvedTheme theme)
+    {
+        if (!_isInitialized || _isDisposed)
+        {
+            return;
+        }
+
+        try
+        {
+            _adapter.SetResolvedTheme(theme);
+            ApplyCurrentModeIcon();
+        }
+        catch (Exception exception)
+        {
+            LogException("ApplyTrayResolvedTheme", exception);
+            SetDiagnostic("蝟餌絞主題切換失敗，已保留先前系統匣圖示。 ");
+        }
     }
 
     private void ApplyCurrentModeIcon()

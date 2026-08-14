@@ -74,8 +74,14 @@
                                Height="{Binding CatRenderSize}"
                                RenderOptions.BitmapScalingMode="NearestNeighbor"
                                SnapsToDevicePixels="True"
-                               Source="{Binding AnimationFrameIndex, Converter={StaticResource RunCatFrameConverter}}"
-                               Stretch="Uniform" />
+                               Stretch="Uniform">
+                            <Image.Source>
+                                <MultiBinding Converter="{StaticResource RunCatFrameConverter}">
+                                    <Binding Path="AnimationFrameIndex" />
+                                    <Binding Path="ResolvedTheme" />
+                                </MultiBinding>
+                            </Image.Source>
+                        </Image>
                     </Canvas>
                     <Border x:Name="CatFloorLine"
                             Height="1"
@@ -95,6 +101,7 @@
                             Click="OnCloseButtonClick"
                             Content="Close"
                             Cursor="Arrow"
+                            Style="{DynamicResource ThemeButtonStyle}"
                             Visibility="{Binding IsInteractive, Converter={StaticResource BooleanToVisibilityConverter}}" />
                 </Grid>
 
@@ -212,7 +219,7 @@
 
                     <Border x:Name="DiagnosticsPanel"
                             Padding="8"
-                            Background="#402F1F1F"
+                            Background="{DynamicResource AppDiagnosticsBackgroundBrush}"
                             BorderBrush="{DynamicResource OverlayErrorBrush}"
                             BorderThickness="1"
                             CornerRadius="6"

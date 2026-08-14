@@ -23,12 +23,12 @@ public sealed class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task SchemaV4_RoundTripsAllContractFields()
+    public async Task SchemaV5_RoundTripsAllContractFields()
     {
         var visibilityHotKey = new OverlayHotKeyGesture(
             false, true, true, true, OverlayHotKeyKey.F11);
         var expected = new AppSettings(
-            4,
+            5,
             new WindowSettings(-420.5, 18.25, false, visibilityHotKey),
             new OverlaySettings(
                 OverlayInteractionMode.Interactive,
@@ -37,7 +37,10 @@ public sealed class JsonSettingsStoreTests : IDisposable
                 new OverlayFieldSettings(
                     false, true, true, false, true, true, false, true)),
             new MetricsSettings(5000),
-            new StartupSettings(true));
+            new StartupSettings(true))
+        {
+            Appearance = new AppearanceSettings(ThemePreference.Dark)
+        };
         var store = CreateStore();
 
         await store.SaveAsync(expected);
@@ -45,7 +48,8 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         Assert.Equal(expected, result.Settings);
         string json = await File.ReadAllTextAsync(Path.Combine(_directory, "settings.json"));
-        Assert.Contains("\"version\": 4", json);
+        Assert.Contains("\"version\": 5", json);
+        Assert.Contains("\"themePreference\": \"Dark\"", json);
         Assert.Contains("\"sizeMode\": \"Expanded\"", json);
         Assert.Contains("\"showHotKeyHints\": true", json);
         Assert.Contains("\"visibilityHotKey\"", json);
@@ -122,7 +126,8 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         SettingsLoadResult result = await CreateStore().LoadAsync();
 
-        Assert.Equal(4, result.Settings.Version);
+        Assert.Equal(5, result.Settings.Version);
+        Assert.Equal(ThemePreference.System, result.Settings.Appearance.ThemePreference);
         Assert.Equal(
             new WindowSettings(
                 -420.5,
@@ -161,7 +166,8 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         SettingsLoadResult result = await CreateStore().LoadAsync();
 
-        Assert.Equal(4, result.Settings.Version);
+        Assert.Equal(5, result.Settings.Version);
+        Assert.Equal(ThemePreference.System, result.Settings.Appearance.ThemePreference);
         Assert.Equal(OverlayHotKeyGesture.DashboardVisibilityDefault,
             result.Settings.Window.VisibilityHotKey);
         Assert.Equal(OverlayHotKeyKey.F8, result.Settings.Overlay.InteractionHotKey!.Key);
@@ -191,12 +197,81 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         SettingsLoadResult result = await CreateStore().LoadAsync();
 
-        Assert.Equal(4, result.Settings.Version);
+        Assert.Equal(5, result.Settings.Version);
+        Assert.Equal(ThemePreference.System, result.Settings.Appearance.ThemePreference);
         Assert.Equal(10, result.Settings.Window.Left);
         Assert.Equal(20, result.Settings.Window.Top);
         Assert.Equal(OverlaySizeMode.Standard, result.Settings.Overlay.SizeMode);
         Assert.Equal(OverlayFieldSettings.ForMode(OverlaySizeMode.Standard),
             result.Settings.Overlay.Fields);
+    }
+
+    [Fact]
+    public async Task SchemaV4_MigratesMissingAppearanceToSystemAndVersion5()
+    {
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(Path.Combine(_directory, "settings.json"), """
+            {
+              "version": 4,
+              "window": { "isDashboardVisible": true },
+              "overlay": { "interactionMode": "ClickThrough" },
+              "metrics": { "samplingIntervalMilliseconds": 1000 },
+              "startup": { "runAtLoginRequested": false }
+            }
+            """);
+
+        SettingsLoadResult result = await CreateStore().LoadAsync();
+
+        Assert.Null(result.Diagnostic);
+        Assert.Equal(5, result.Settings.Version);
+        Assert.Equal(ThemePreference.System, result.Settings.Appearance.ThemePreference);
+    }
+
+    [Theory]
+    [InlineData("FutureTheme")]
+    [InlineData(null)]
+    public async Task SchemaV5_MissingOrUnknownThemeFallsBackToSystem(string? theme)
+    {
+        Directory.CreateDirectory(_directory);
+        string appearance = theme is null
+            ? "{ }"
+            : $$"""{ "themePreference": "{{theme}}" }""";
+        await File.WriteAllTextAsync(Path.Combine(_directory, "settings.json"), $$"""
+            {
+              "version": 5,
+              "appearance": {{appearance}},
+              "window": { "isDashboardVisible": true },
+              "overlay": { "interactionMode": "ClickThrough" },
+              "metrics": { "samplingIntervalMilliseconds": 1000 },
+              "startup": { "runAtLoginRequested": false }
+            }
+            """);
+
+        SettingsLoadResult result = await CreateStore().LoadAsync();
+
+        Assert.Null(result.Diagnostic);
+        Assert.Equal(ThemePreference.System, result.Settings.Appearance.ThemePreference);
+    }
+
+    [Fact]
+    public async Task SchemaV5_NullThemeFallsBackToSystem()
+    {
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(Path.Combine(_directory, "settings.json"), """
+            {
+              "version": 5,
+              "appearance": { "themePreference": null },
+              "window": { "isDashboardVisible": true },
+              "overlay": { "interactionMode": "ClickThrough" },
+              "metrics": { "samplingIntervalMilliseconds": 1000 },
+              "startup": { "runAtLoginRequested": false }
+            }
+            """);
+
+        SettingsLoadResult result = await CreateStore().LoadAsync();
+
+        Assert.Null(result.Diagnostic);
+        Assert.Equal(ThemePreference.System, result.Settings.Appearance.ThemePreference);
     }
 
     [Theory]

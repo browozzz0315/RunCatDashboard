@@ -53,6 +53,7 @@ internal sealed class JsonSettingsStore : ISettingsStore
         SerializerOptions.Converters.Add(new LenientInteractionModeConverter());
         SerializerOptions.Converters.Add(new LenientOverlaySizeModeConverter());
         SerializerOptions.Converters.Add(new LenientOverlayHotKeyKeyConverter());
+        SerializerOptions.Converters.Add(new LenientThemePreferenceConverter());
     }
 
     private readonly string _directory;
@@ -90,7 +91,8 @@ internal sealed class JsonSettingsStore : ISettingsStore
                 element.TryGetInt32(out int parsedVersion)
                     ? parsedVersion
                     : 0;
-            if (version is not 1 and not 2 and not 3 && version != AppSettings.CurrentVersion)
+            if (version is not 1 and not 2 and not 3 and not 4 &&
+                version != AppSettings.CurrentVersion)
             {
                 string backup = BackupInvalidFile($"unsupported-v{version}");
                 return new SettingsLoadResult(
@@ -317,6 +319,38 @@ internal sealed class JsonSettingsStore : ISettingsStore
         public override void Write(
             Utf8JsonWriter writer,
             OverlayHotKeyKey value,
+            JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
+    }
+
+    private sealed class LenientThemePreferenceConverter : JsonConverter<ThemePreference>
+    {
+        public override ThemePreference Read(
+            ref Utf8JsonReader reader,
+            Type typeToConvert,
+            JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String &&
+                Enum.TryParse(reader.GetString(), ignoreCase: true, out ThemePreference preference))
+            {
+                return preference;
+            }
+
+            if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out int numeric))
+            {
+                return (ThemePreference)numeric;
+            }
+
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                return (ThemePreference)(-1);
+            }
+
+            return (ThemePreference)(-1);
+        }
+
+        public override void Write(
+            Utf8JsonWriter writer,
+            ThemePreference value,
             JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
     }
 

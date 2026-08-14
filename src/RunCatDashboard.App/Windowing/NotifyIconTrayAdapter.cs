@@ -1,4 +1,5 @@
 using Forms = System.Windows.Forms;
+using RunCatDashboard.App.Theming;
 
 namespace RunCatDashboard.App.Windowing;
 
@@ -9,16 +10,24 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
     private readonly Forms.ToolStripMenuItem _visibilityItem;
     private readonly Forms.ToolStripMenuItem _interactionItem;
     private readonly Forms.ToolStripMenuItem _animationItem;
-    private readonly ITrayIconResource? _iconResource;
-    private readonly IReadOnlyList<ITrayIconResource> _animationIconResources =
+    private readonly ITrayIconResource? _lightIconResource;
+    private readonly ITrayIconResource? _darkIconResource;
+    private readonly IReadOnlyList<ITrayIconResource> _lightAnimationIconResources =
         Array.Empty<ITrayIconResource>();
-    private readonly string? _iconLoadFailure;
-    private readonly string? _animationIconLoadFailure;
+    private readonly IReadOnlyList<ITrayIconResource> _darkAnimationIconResources =
+        Array.Empty<ITrayIconResource>();
+    private readonly string? _lightIconLoadFailure;
+    private readonly string? _darkIconLoadFailure;
+    private readonly string? _lightAnimationIconLoadFailure;
+    private readonly string? _darkAnimationIconLoadFailure;
+    private ResolvedTheme _resolvedTheme = ResolvedTheme.Light;
     private bool _isDisposed;
 
     internal NotifyIconTrayAdapter(
         ITrayIconResourceLoader iconLoader,
-        ITrayAnimationIconResourceLoader animationIconLoader)
+        ITrayAnimationIconResourceLoader animationIconLoader,
+        ITrayIconResourceLoader? whiteIconLoader = null,
+        ITrayAnimationIconResourceLoader? whiteAnimationIconLoader = null)
     {
         ArgumentNullException.ThrowIfNull(iconLoader);
         ArgumentNullException.ThrowIfNull(animationIconLoader);
@@ -46,15 +55,15 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
 
         try
         {
-            _iconResource = iconLoader.Load();
-            _notifyIcon.Icon = _iconResource.Icon;
+            _lightIconResource = iconLoader.Load();
+            _notifyIcon.Icon = _lightIconResource.Icon;
         }
         catch (Exception exception)
         {
-            _iconLoadFailure = $"載入 RunCatDashboard 系統匣圖示失敗：{exception.Message}";
+            _lightIconLoadFailure = $"載入 RunCatDashboard 系統匣圖示失敗：{exception.Message}";
         }
 
-        if (_iconResource is not null)
+        if (_lightIconResource is not null)
         {
             try
             {
@@ -73,11 +82,60 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
                         $"實際為 {animationFrames.Count} 幀。");
                 }
 
-                _animationIconResources = animationFrames;
+                _lightAnimationIconResources = animationFrames;
             }
             catch (Exception exception)
             {
-                _animationIconLoadFailure = exception.Message;
+                _lightAnimationIconLoadFailure = exception.Message;
+            }
+        }
+
+        if (whiteIconLoader is null)
+        {
+            _darkIconResource = _lightIconResource;
+            _darkIconLoadFailure = _lightIconLoadFailure;
+        }
+        else
+        {
+            try
+            {
+                _darkIconResource = whiteIconLoader.Load();
+            }
+            catch (Exception exception)
+            {
+                _darkIconLoadFailure = $"載入 RunCatDashboard 白色系統匣圖示失敗：{exception.Message}";
+            }
+        }
+
+        if (whiteAnimationIconLoader is null)
+        {
+            _darkAnimationIconResources = _lightAnimationIconResources;
+            _darkAnimationIconLoadFailure = _lightAnimationIconLoadFailure;
+        }
+        else
+        {
+            try
+            {
+                IReadOnlyList<ITrayIconResource> animationFrames =
+                    whiteAnimationIconLoader.LoadFrames();
+                if (animationFrames.Count !=
+                    AssemblyTrayAnimationIconResourceLoader.FrameCount)
+                {
+                    foreach (ITrayIconResource animationFrame in animationFrames)
+                    {
+                        animationFrame.Dispose();
+                    }
+
+                    throw new InvalidOperationException(
+                        $"白色系統匣動畫圖示應有 {AssemblyTrayAnimationIconResourceLoader.FrameCount} 幀，" +
+                        $"實際為 {animationFrames.Count} 幀。");
+                }
+
+                _darkAnimationIconResources = animationFrames;
+            }
+            catch (Exception exception)
+            {
+                _darkAnimationIconLoadFailure = exception.Message;
             }
         }
 
@@ -96,11 +154,19 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
     public event Action? SettingsRequested;
     public event Action? ExitRequested;
 
-    public bool CanUseAnimatedIcons => _animationIconResources.Count > 0;
+    public bool CanUseAnimatedIcons => CurrentAnimationIconResources.Count > 0;
 
-    public string? AnimationIconLoadError => _animationIconLoadFailure;
+    public string? AnimationIconLoadError => CurrentAnimationIconLoadFailure;
 
     internal bool HasAssignedIcon => _notifyIcon.Icon is not null;
+
+    internal System.Drawing.Icon? AssignedIcon => _notifyIcon.Icon;
+
+    public void SetResolvedTheme(ResolvedTheme theme)
+    {
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
+        _resolvedTheme = theme;
+    }
 
     public void Show()
     {
@@ -123,24 +189,26 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
     public void SetAnimatedFrame(int frameIndex)
     {
         ObjectDisposedException.ThrowIf(_isDisposed, this);
-        if (!CanUseAnimatedIcons)
+        IReadOnlyList<ITrayIconResource> animationIconResources =
+            CurrentAnimationIconResources;
+        if (animationIconResources.Count == 0)
         {
             throw new InvalidOperationException(
-                _animationIconLoadFailure ?? "系統匣動畫圖示資源無法使用。");
+                CurrentAnimationIconLoadFailure ?? "系統匣動畫圖示資源無法使用。");
         }
 
         ArgumentOutOfRangeException.ThrowIfNegative(frameIndex);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(
             frameIndex,
-            _animationIconResources.Count);
-        AssignIcon(_animationIconResources[frameIndex].Icon);
+            animationIconResources.Count);
+        AssignIcon(animationIconResources[frameIndex].Icon);
     }
 
     public void SetStaticIcon()
     {
         ObjectDisposedException.ThrowIf(_isDisposed, this);
         ThrowIfIconUnavailable();
-        AssignIcon(_iconResource!.Icon);
+        AssignIcon(CurrentIconResource!.Icon);
     }
 
     public void RecoverAfterExplorerRestart()
@@ -149,7 +217,7 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
         ThrowIfIconUnavailable();
         if (_notifyIcon.Icon is null)
         {
-            _notifyIcon.Icon = _iconResource!.Icon;
+            _notifyIcon.Icon = CurrentIconResource!.Icon;
         }
         _notifyIcon.Visible = false;
         _notifyIcon.Visible = true;
@@ -166,11 +234,31 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
         _menu.Dispose();
-        foreach (ITrayIconResource animationIconResource in _animationIconResources)
+        var ownedResources = new HashSet<ITrayIconResource>(ReferenceEqualityComparer.Instance);
+        foreach (ITrayIconResource resource in _lightAnimationIconResources)
         {
-            animationIconResource.Dispose();
+            ownedResources.Add(resource);
         }
-        _iconResource?.Dispose();
+
+        foreach (ITrayIconResource resource in _darkAnimationIconResources)
+        {
+            ownedResources.Add(resource);
+        }
+
+        if (_lightIconResource is not null)
+        {
+            ownedResources.Add(_lightIconResource);
+        }
+
+        if (_darkIconResource is not null)
+        {
+            ownedResources.Add(_darkIconResource);
+        }
+
+        foreach (ITrayIconResource resource in ownedResources)
+        {
+            resource.Dispose();
+        }
         DoubleClicked = null;
         VisibilityToggleRequested = null;
         InteractionToggleRequested = null;
@@ -204,12 +292,32 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
 
     private void ThrowIfIconUnavailable()
     {
-        if (_iconResource is null || _notifyIcon.Icon is null)
+        if (CurrentIconResource is null || _notifyIcon.Icon is null)
         {
             throw new InvalidOperationException(
-                _iconLoadFailure ?? "RunCatDashboard 系統匣圖示無法使用。");
+                CurrentIconLoadFailure ?? "RunCatDashboard 系統匣圖示無法使用。");
         }
     }
+
+    private ITrayIconResource? CurrentIconResource =>
+        _resolvedTheme == ResolvedTheme.Dark
+            ? _darkIconResource
+            : _lightIconResource;
+
+    private string? CurrentIconLoadFailure =>
+        _resolvedTheme == ResolvedTheme.Dark
+            ? _darkIconLoadFailure
+            : _lightIconLoadFailure;
+
+    private IReadOnlyList<ITrayIconResource> CurrentAnimationIconResources =>
+        _resolvedTheme == ResolvedTheme.Dark
+            ? _darkAnimationIconResources
+            : _lightAnimationIconResources;
+
+    private string? CurrentAnimationIconLoadFailure =>
+        _resolvedTheme == ResolvedTheme.Dark
+            ? _darkAnimationIconLoadFailure
+            : _lightAnimationIconLoadFailure;
 
     private void AssignIcon(System.Drawing.Icon icon)
     {

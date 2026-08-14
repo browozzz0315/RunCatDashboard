@@ -7,6 +7,7 @@ using System.Windows.Media.Imaging;
 using System.Xml.Linq;
 using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Settings;
+using RunCatDashboard.App.Theming;
 using RunCatDashboard.App.Views;
 
 namespace RunCatDashboard.Tests.Resources;
@@ -20,6 +21,10 @@ public sealed class RunCatResourceTests
         Enumerable.Range(1, ExpectedFrameCount)
             .Select(index => $"assets/runcat/cat-frame-{index:D2}.png")
             .ToArray();
+    private static readonly string[] WhiteFrameResourceNames =
+        Enumerable.Range(1, ExpectedFrameCount)
+            .Select(index => $"assets/runcat/white/cat-frame-{index:D2}.png")
+            .ToArray();
 
     [Fact]
     public void Assembly_ContainsExactlyEightStableOrderedFrameResources()
@@ -27,7 +32,9 @@ public sealed class RunCatResourceTests
         IReadOnlyDictionary<string, byte[]> resources = ReadRunCatResources();
 
         Assert.Equal(8, ExpectedFrameCount);
-        Assert.Equal(FrameResourceNames, resources.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(
+            FrameResourceNames.Concat(WhiteFrameResourceNames),
+            resources.Keys.Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -35,7 +42,7 @@ public sealed class RunCatResourceTests
     {
         IReadOnlyDictionary<string, byte[]> resources = ReadRunCatResources();
 
-        foreach (string resourceName in FrameResourceNames)
+        foreach (string resourceName in FrameResourceNames.Concat(WhiteFrameResourceNames))
         {
             byte[] png = resources[resourceName];
             Assert.True(png.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature));
@@ -99,7 +106,7 @@ public sealed class RunCatResourceTests
     {
         IReadOnlyDictionary<string, byte[]> resources = ReadRunCatResources();
 
-        int distinctFrameCount = FrameResourceNames
+        int distinctFrameCount = FrameResourceNames.Concat(WhiteFrameResourceNames)
             .Select(name => Convert.ToBase64String(Decode(resources[name]).Pixels))
             .Distinct(StringComparer.Ordinal)
             .Count();
@@ -131,6 +138,17 @@ public sealed class RunCatResourceTests
                     Assert.Same(first, repeated);
                     Assert.Same(first, fromSecondConverter);
                 }
+
+                var multiConverter = new RunCatFrameConverter();
+                object white = multiConverter.Convert(
+                    [3, ResolvedTheme.Dark],
+                    typeof(ImageSource),
+                    null!,
+                    null!);
+                Assert.NotSame(
+                    multiConverter.Convert(3, typeof(ImageSource), null!, null!),
+                    white);
+                Assert.True(Assert.IsAssignableFrom<BitmapSource>(white).IsFrozen);
 
                 Assert.Same(
                     DependencyProperty.UnsetValue,
@@ -164,9 +182,7 @@ public sealed class RunCatResourceTests
         XElement image = Assert.Single(
             document.Descendants(presentation + "Image"),
             element =>
-                element.Attribute("Source")?.Value.Contains(
-                    "RunCatFrameConverter",
-                    StringComparison.Ordinal) == true);
+            element.Element(presentation + "Image.Source")?.Element(presentation + "MultiBinding") is not null);
 
         XElement animationCanvas = Assert.IsType<XElement>(image.Parent);
         XElement viewport = Assert.IsType<XElement>(animationCanvas.Parent);
@@ -198,7 +214,7 @@ public sealed class RunCatResourceTests
             OverlaySizeProfile profile = OverlaySizeProfiles.Get(mode);
             double viewportWidth = GetCatViewportWidth(profile);
 
-            foreach (string resourceName in FrameResourceNames)
+            foreach (string resourceName in FrameResourceNames.Concat(WhiteFrameResourceNames))
             {
                 AlphaBounds bounds = GetAlphaBounds(Decode(resources[resourceName]));
                 PixelBounds rendered = RenderWithProfile(bounds, profile);
@@ -227,7 +243,7 @@ public sealed class RunCatResourceTests
             OverlaySizeProfile profile = OverlaySizeProfiles.Get(mode);
             double floorLineTop = profile.CatViewportHeight - floorLineHeight;
 
-            foreach (string resourceName in FrameResourceNames)
+            foreach (string resourceName in FrameResourceNames.Concat(WhiteFrameResourceNames))
             {
                 PixelBounds rendered = RenderWithProfile(
                     GetAlphaBounds(Decode(resources[resourceName])),
@@ -267,7 +283,7 @@ public sealed class RunCatResourceTests
             margin[1] + buttonHeight);
         IReadOnlyDictionary<string, byte[]> resources = ReadRunCatResources();
 
-        foreach (string resourceName in FrameResourceNames)
+        foreach (string resourceName in FrameResourceNames.Concat(WhiteFrameResourceNames))
         {
             PixelBounds rendered = RenderWithProfile(
                 GetAlphaBounds(Decode(resources[resourceName])),

@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.IO;
+using RunCatDashboard.App.Theming;
 using RunCatDashboard.App.Windowing;
 
 namespace RunCatDashboard.Tests.Windowing;
@@ -33,6 +34,21 @@ public sealed class TrayIconResourceTests
         Assert.Equal(16, firstHeight);
         Assert.Equal(32, secondWidth);
         Assert.Equal(32, secondHeight);
+        Assert.Equal(new Size(16, 16), small.Size);
+        Assert.Equal(new Size(32, 32), medium.Size);
+    }
+
+    [Fact]
+    public void WhiteAssemblyResource_LoadsAsMultiSizeIcon()
+    {
+        var loader = new AssemblyTrayIconResourceLoader(
+            typeof(AssemblyTrayIconResourceLoader).Assembly,
+            AssemblyTrayIconResourceLoader.WhiteResourceName);
+
+        using ITrayIconResource resource = loader.Load();
+        using var small = new Icon(resource.Icon, new Size(16, 16));
+        using var medium = new Icon(resource.Icon, new Size(32, 32));
+
         Assert.Equal(new Size(16, 16), small.Size);
         Assert.Equal(new Size(32, 32), medium.Size);
     }
@@ -171,6 +187,27 @@ public sealed class TrayIconResourceTests
     }
 
     [Fact]
+    public void WhiteAnimationAssemblyResources_ContainEightLoadableIcons()
+    {
+        var loader = new AssemblyTrayAnimationIconResourceLoader(
+            typeof(AssemblyTrayAnimationIconResourceLoader).Assembly,
+            AssemblyTrayAnimationIconResourceLoader.WhiteResourceNamePrefix);
+        using var resources = new DisposableResources(loader.LoadFrames());
+
+        Assert.Equal(AssemblyTrayAnimationIconResourceLoader.FrameCount, resources.Items.Count);
+        for (int frameIndex = 0; frameIndex < resources.Items.Count; frameIndex++)
+        {
+            string resourceName =
+                $"{AssemblyTrayAnimationIconResourceLoader.WhiteResourceNamePrefix}{frameIndex + 1:D2}.ico";
+            using Stream stream = typeof(AssemblyTrayAnimationIconResourceLoader).Assembly
+                .GetManifestResourceStream(resourceName)!;
+            Assert.NotNull(stream);
+            using var icon16 = new Icon(resources.Items[frameIndex].Icon, new Size(16, 16));
+            Assert.Equal(new Size(16, 16), icon16.Size);
+        }
+    }
+
+    [Fact]
     public void NotifyIcon_WhenAnimationLoadFails_KeepsStaticFallbackAvailable()
     {
         Exception? failure = null;
@@ -187,6 +224,58 @@ public sealed class TrayIconResourceTests
                 Assert.Contains("configured animation failure", adapter.AnimationIconLoadError);
                 adapter.SetStaticIcon();
                 Assert.True(adapter.HasAssignedIcon);
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)));
+        Assert.Null(failure);
+    }
+
+    [Fact]
+    public void NotifyIcon_UsesResolvedThemeIconWithoutRecreatingAdapter()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var black = new FakeTrayIconResource();
+                var white = new FakeTrayIconResource();
+                var blackFrames = Enumerable.Range(0, 8)
+                    .Select(_ => new FakeTrayIconResource())
+                    .ToArray();
+                var whiteFrames = Enumerable.Range(0, 8)
+                    .Select(_ => new FakeTrayIconResource())
+                    .ToArray();
+                using var adapter = new NotifyIconTrayAdapter(
+                    new FakeTrayIconResourceLoader(black),
+                    new FakeTrayAnimationIconResourceLoader(blackFrames),
+                    new FakeTrayIconResourceLoader(white),
+                    new FakeTrayAnimationIconResourceLoader(whiteFrames));
+
+                System.Drawing.Icon initialIcon = adapter.AssignedIcon!;
+                adapter.SetResolvedTheme(ResolvedTheme.Dark);
+                adapter.SetStaticIcon();
+                Assert.Same(white.Icon, adapter.AssignedIcon);
+                adapter.SetAnimatedFrame(3);
+                Assert.Same(whiteFrames[3].Icon, adapter.AssignedIcon);
+
+                adapter.SetResolvedTheme(ResolvedTheme.Light);
+                adapter.SetAnimatedFrame(6);
+                Assert.Same(blackFrames[6].Icon, adapter.AssignedIcon);
+                Assert.NotSame(initialIcon, adapter.AssignedIcon);
+
+                adapter.Dispose();
+                Assert.Equal(1, black.DisposeCount);
+                Assert.Equal(1, white.DisposeCount);
+                Assert.All(blackFrames, frame => Assert.Equal(1, frame.DisposeCount));
+                Assert.All(whiteFrames, frame => Assert.Equal(1, frame.DisposeCount));
             }
             catch (Exception exception)
             {

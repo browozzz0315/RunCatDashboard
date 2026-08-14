@@ -2,6 +2,8 @@ using RunCatDashboard.App.Startup;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Windowing;
+using RunCatDashboard.App.Theming;
+using System.Diagnostics;
 
 namespace RunCatDashboard.App.Settings;
 
@@ -20,6 +22,7 @@ public interface ISettingsApplicationService
         OverlaySizeMode sizeMode = OverlaySizeMode.Standard,
         OverlayFieldSettings? fields = null,
         OverlayDisplayPolicy displayPolicy = OverlayDisplayPolicy.HideOverFullscreenApps,
+        ThemePreference themePreference = ThemePreference.System,
         CancellationToken cancellationToken = default);
 }
 
@@ -32,6 +35,7 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
     private readonly MainWindowViewModel _mainViewModel;
     private readonly IRunAtLoginService _runAtLogin;
     private readonly IUiDispatcher _uiDispatcher;
+    private readonly IThemeCoordinator? _themeCoordinator;
 
     internal SettingsApplicationService(
         ISettingsService settings,
@@ -40,7 +44,8 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         IGlobalHotKeyController hotKeys,
         MainWindowViewModel mainViewModel,
         IRunAtLoginService runAtLogin,
-        IUiDispatcher uiDispatcher)
+        IUiDispatcher uiDispatcher,
+        IThemeCoordinator? themeCoordinator = null)
     {
         _settings = settings;
         _visibility = visibility;
@@ -49,6 +54,7 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         _mainViewModel = mainViewModel;
         _runAtLogin = runAtLogin;
         _uiDispatcher = uiDispatcher;
+        _themeCoordinator = themeCoordinator;
     }
 
     public AppSettings Current => _settings.Current;
@@ -66,6 +72,7 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         OverlaySizeMode sizeMode = OverlaySizeMode.Standard,
         OverlayFieldSettings? fields = null,
         OverlayDisplayPolicy displayPolicy = OverlayDisplayPolicy.HideOverFullscreenApps,
+        ThemePreference themePreference = ThemePreference.System,
         CancellationToken cancellationToken = default)
     {
         if (!Enum.IsDefined(interactionMode))
@@ -77,6 +84,8 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
             throw new ArgumentException(presentationError, nameof(fields));
         if (!Enum.IsDefined(displayPolicy))
             throw new ArgumentOutOfRangeException(nameof(displayPolicy));
+        if (!Enum.IsDefined(themePreference))
+            throw new ArgumentOutOfRangeException(nameof(themePreference));
         ArgumentNullException.ThrowIfNull(interactionHotKey);
         ArgumentNullException.ThrowIfNull(visibilityHotKey);
         if (!interactionHotKey.TryValidate(out string? hotKeyValidationError))
@@ -95,6 +104,21 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
             previous.Window.VisibilityHotKey ?? OverlayHotKeyGesture.DashboardVisibilityDefault;
         bool interactionChanged = interactionHotKey != previousInteraction;
         bool visibilityChanged = visibilityHotKey != previousVisibility;
+        bool dashboardVisibilityChanged =
+            dashboardVisible != previous.Window.IsDashboardVisible;
+        bool interactionModeChanged =
+            interactionMode != previous.Overlay.InteractionMode;
+        bool samplingIntervalChanged =
+            samplingIntervalMilliseconds != previous.Metrics.SamplingIntervalMilliseconds;
+        bool runAtLoginChanged =
+            runAtLoginRequested != previous.Startup.RunAtLoginRequested;
+        bool presentationChanged =
+            sizeMode != previous.Overlay.SizeMode ||
+            fields != (previous.Overlay.Fields ??
+                OverlayFieldSettings.ForMode(previous.Overlay.SizeMode));
+        bool themeChanged = themePreference != previous.Appearance.ThemePreference;
+        AppSettings? mergeBase = null;
+        AppSettings? mergedCandidate = null;
 
         GlobalHotKeyApplyResult? interactionResult = null;
         if (interactionChanged)
@@ -149,17 +173,25 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         {
             saved = await _settings
                 .TryReplaceCurrentAsync(
-                    latest => MergeDraftWithConcurrentUpdates(
-                        previous,
-                        latest,
-                        dashboardVisible,
-                        interactionMode,
-                        interactionHotKey,
-                        visibilityHotKey,
-                        samplingIntervalMilliseconds,
-                        runAtLoginRequested,
-                        sizeMode,
-                        fields),
+                    latest =>
+                    {
+                        AppSettings candidate = MergeDraftWithConcurrentUpdates(
+                            latest,
+                            previous,
+                            dashboardVisible,
+                            interactionMode,
+                            interactionHotKey,
+                            visibilityHotKey,
+                            samplingIntervalMilliseconds,
+                            runAtLoginRequested,
+                            sizeMode,
+                            fields,
+                            themePreference,
+                            themeChanged,
+                            latestSnapshot => mergeBase = latestSnapshot);
+                        mergedCandidate = candidate;
+                        return candidate;
+                    },
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -204,6 +236,80 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         }
 
         AppSettings applied = _settings.Current;
+        if (_themeCoordinator is not null)
+        {
+            try
+            {
+                await _themeCoordinator
+                    .ApplyPreferenceAsync(applied.Appearance.ThemePreference, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                (bool themeRuntimeRollbackSucceeded, Exception? themeRollbackFailure) =
+                    await TryRestoreThemePreferenceAsync(
+                        previous.Appearance.ThemePreference)
+                        .ConfigureAwait(false);
+                bool themePersistenceRollbackSucceeded = false;
+                try
+                {
+                    themePersistenceRollbackSucceeded = await _settings
+                        .TryReplaceCurrentAsync(
+                            latest => RestoreAfterThemeFailure(
+                                previous,
+                                mergedCandidate ?? applied,
+                                mergeBase ?? previous,
+                                latest,
+                                dashboardVisibilityChanged,
+                                interactionModeChanged,
+                                samplingIntervalChanged,
+                                runAtLoginChanged,
+                                presentationChanged,
+                                interactionChanged,
+                                visibilityChanged,
+                                themeChanged),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception rollbackException)
+                {
+                    RecordRollbackFailure("persisted-settings", rollbackException);
+                }
+                if (!themePersistenceRollbackSucceeded)
+                {
+                    RecordRollbackFailure(
+                        "persisted-settings",
+                        new InvalidOperationException(
+                            "Settings persistence rollback returned false."));
+                }
+
+                bool visibilityRollbackSucceeded = RollBackGesture(
+                    visibilityResult,
+                    () => _hotKeys.ApplyVisibilityGesture(previousVisibility),
+                    isInteractionGesture: false);
+                bool interactionRollbackSucceeded = RollBackGesture(
+                    interactionResult,
+                    () => _hotKeys.ApplyInteractionGesture(previousInteraction),
+                    isInteractionGesture: true);
+                _mainViewModel.ApplyHotKeyRegistrations(_hotKeys.Registrations);
+
+                if (!themePersistenceRollbackSucceeded ||
+                    !themeRuntimeRollbackSucceeded ||
+                    !visibilityRollbackSucceeded ||
+                    !interactionRollbackSucceeded)
+                {
+                    SynchronizeActualHotKeyGestures();
+                }
+
+                if (themeRollbackFailure is not null)
+                {
+                    RecordRollbackFailure("theme", themeRollbackFailure);
+                }
+
+                throw;
+            }
+        }
+
         await _uiDispatcher.InvokeAsync(() =>
         {
             _mainViewModel.ApplyOverlayPresentation(
@@ -260,8 +366,8 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
     }
 
     private static AppSettings MergeDraftWithConcurrentUpdates(
-        AppSettings previous,
         AppSettings latest,
+        AppSettings previous,
         bool dashboardVisible,
         OverlayInteractionMode interactionMode,
         OverlayHotKeyGesture interactionHotKey,
@@ -269,8 +375,12 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         int samplingIntervalMilliseconds,
         bool runAtLoginRequested,
         OverlaySizeMode sizeMode,
-        OverlayFieldSettings fields)
+        OverlayFieldSettings fields,
+        ThemePreference themePreference,
+        bool themeChanged,
+        Action<AppSettings>? observeLatest = null)
     {
+        observeLatest?.Invoke(latest);
         bool effectiveVisibility =
             latest.Window.IsDashboardVisible != previous.Window.IsDashboardVisible
                 ? latest.Window.IsDashboardVisible
@@ -294,6 +404,9 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         OverlayFieldSettings effectiveFields = presentationChangedConcurrently
             ? latest.Overlay.Fields ?? OverlayFieldSettings.ForMode(latest.Overlay.SizeMode)
             : fields;
+        ThemePreference effectiveTheme = themeChanged
+            ? themePreference
+            : latest.Appearance.ThemePreference;
 
         return latest with
         {
@@ -310,8 +423,146 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
                 Fields = effectiveFields
             },
             Metrics = effectiveMetrics,
-            Startup = effectiveStartup
+            Startup = effectiveStartup,
+            Appearance = new AppearanceSettings(effectiveTheme)
         };
+    }
+
+    private static AppSettings RestoreAfterThemeFailure(
+        AppSettings previous,
+        AppSettings applied,
+        AppSettings mergeBase,
+        AppSettings latest,
+        bool dashboardVisibilityChanged,
+        bool interactionModeChanged,
+        bool samplingIntervalChanged,
+        bool runAtLoginChanged,
+        bool presentationChanged,
+        bool interactionHotKeyChanged,
+        bool visibilityHotKeyChanged,
+        bool themeChanged)
+    {
+        bool dashboardVisible = RestoreValue(
+            previous.Window.IsDashboardVisible,
+            applied.Window.IsDashboardVisible,
+            mergeBase.Window.IsDashboardVisible,
+            latest.Window.IsDashboardVisible,
+            dashboardVisibilityChanged);
+        OverlayInteractionMode interactionMode = RestoreValue(
+            previous.Overlay.InteractionMode,
+            applied.Overlay.InteractionMode,
+            mergeBase.Overlay.InteractionMode,
+            latest.Overlay.InteractionMode,
+            interactionModeChanged);
+        MetricsSettings metrics = RestoreValue(
+            previous.Metrics,
+            applied.Metrics,
+            mergeBase.Metrics,
+            latest.Metrics,
+            samplingIntervalChanged);
+        StartupSettings startup = RestoreValue(
+            previous.Startup,
+            applied.Startup,
+            mergeBase.Startup,
+            latest.Startup,
+            runAtLoginChanged);
+        OverlaySizeMode sizeMode = RestoreValue(
+            previous.Overlay.SizeMode,
+            applied.Overlay.SizeMode,
+            mergeBase.Overlay.SizeMode,
+            latest.Overlay.SizeMode,
+            presentationChanged);
+        OverlayFieldSettings fields = RestoreValue(
+            previous.Overlay.Fields ?? OverlayFieldSettings.ForMode(previous.Overlay.SizeMode),
+            applied.Overlay.Fields ?? OverlayFieldSettings.ForMode(applied.Overlay.SizeMode),
+            mergeBase.Overlay.Fields ?? OverlayFieldSettings.ForMode(mergeBase.Overlay.SizeMode),
+            latest.Overlay.Fields ?? OverlayFieldSettings.ForMode(latest.Overlay.SizeMode),
+            presentationChanged);
+        OverlayHotKeyGesture interactionHotKey = RestoreValue(
+            previous.Overlay.InteractionHotKey ?? OverlayHotKeyGesture.Default,
+            applied.Overlay.InteractionHotKey ?? OverlayHotKeyGesture.Default,
+            mergeBase.Overlay.InteractionHotKey ?? OverlayHotKeyGesture.Default,
+            latest.Overlay.InteractionHotKey ?? OverlayHotKeyGesture.Default,
+            interactionHotKeyChanged);
+        OverlayHotKeyGesture visibilityHotKey = RestoreValue(
+            previous.Window.VisibilityHotKey ?? OverlayHotKeyGesture.DashboardVisibilityDefault,
+            applied.Window.VisibilityHotKey ?? OverlayHotKeyGesture.DashboardVisibilityDefault,
+            mergeBase.Window.VisibilityHotKey ?? OverlayHotKeyGesture.DashboardVisibilityDefault,
+            latest.Window.VisibilityHotKey ?? OverlayHotKeyGesture.DashboardVisibilityDefault,
+            visibilityHotKeyChanged);
+        ThemePreference theme = RestoreValue(
+            previous.Appearance.ThemePreference,
+            applied.Appearance.ThemePreference,
+            mergeBase.Appearance.ThemePreference,
+            latest.Appearance.ThemePreference,
+            themeChanged);
+
+        return latest with
+        {
+            Window = latest.Window with
+            {
+                IsDashboardVisible = dashboardVisible,
+                VisibilityHotKey = visibilityHotKey
+            },
+            Overlay = latest.Overlay with
+            {
+                InteractionMode = interactionMode,
+                InteractionHotKey = interactionHotKey,
+                SizeMode = sizeMode,
+                Fields = fields
+            },
+            Metrics = metrics,
+            Startup = startup,
+            Appearance = new AppearanceSettings(theme)
+        };
+    }
+
+    private static T RestoreValue<T>(
+        T previous,
+        T applied,
+        T mergeBase,
+        T latest,
+        bool draftChanged)
+        where T : notnull
+    {
+        if (!draftChanged || !EqualityComparer<T>.Default.Equals(latest, applied))
+        {
+            return latest;
+        }
+
+        return EqualityComparer<T>.Default.Equals(mergeBase, previous)
+            ? previous
+            : mergeBase;
+    }
+
+    private async Task<(bool Succeeded, Exception? Failure)> TryRestoreThemePreferenceAsync(
+        ThemePreference preference)
+    {
+        if (_themeCoordinator is null)
+        {
+            return (true, null);
+        }
+
+        try
+        {
+            await _themeCoordinator
+                .ApplyPreferenceAsync(preference)
+                .ConfigureAwait(false);
+            return (true, null);
+        }
+        catch (Exception exception)
+        {
+            RecordRollbackFailure("runtime-theme", exception);
+            return (false, exception);
+        }
+    }
+
+    private static void RecordRollbackFailure(string operation, Exception exception)
+    {
+        Trace.TraceError(
+            "Settings Apply rollback failed for {0}: {1}",
+            operation,
+            exception);
     }
 
 }
