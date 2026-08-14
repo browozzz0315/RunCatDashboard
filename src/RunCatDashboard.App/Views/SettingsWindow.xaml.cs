@@ -14,6 +14,7 @@ public partial class SettingsWindow : Window, ISettingsWindowHost
     private const int WindowMessageNonClientLeftButtonDown = 0x00A1;
     private readonly SettingsWindowViewModel _viewModel;
     private HwndSource? _windowSource;
+    private bool _allowRequestedClose;
 
     public SettingsWindow(SettingsWindowViewModel viewModel)
     {
@@ -37,8 +38,11 @@ public partial class SettingsWindow : Window, ISettingsWindowHost
     {
         if (_viewModel.IsApplying)
         {
-            e.Cancel = true;
-            return;
+            if (!_allowRequestedClose)
+            {
+                e.Cancel = true;
+                return;
+            }
         }
 
         _viewModel.EndHotKeyCapture();
@@ -54,7 +58,18 @@ public partial class SettingsWindow : Window, ISettingsWindowHost
         base.OnClosed(e);
     }
 
-    private void OnCloseRequested() => Close();
+    private void OnCloseRequested()
+    {
+        _allowRequestedClose = true;
+        try
+        {
+            Close();
+        }
+        finally
+        {
+            _allowRequestedClose = false;
+        }
+    }
 
     private void OnHotKeyCapturePreviewMouseLeftButtonDown(
         object sender,

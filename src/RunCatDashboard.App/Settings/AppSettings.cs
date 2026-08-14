@@ -9,7 +9,9 @@ public sealed record AppSettings(
     MetricsSettings Metrics,
     StartupSettings Startup)
 {
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
+
+    public AppearanceSettings Appearance { get; init; } = AppearanceSettings.Defaults;
 
     public static AppSettings Defaults { get; } = new(
         CurrentVersion,
@@ -24,7 +26,10 @@ public sealed record AppSettings(
             OverlaySizeMode.Standard,
             OverlayFieldSettings.ForMode(OverlaySizeMode.Standard)),
         new MetricsSettings(1000),
-        new StartupSettings(false));
+        new StartupSettings(false))
+    {
+        Appearance = AppearanceSettings.Defaults
+    };
 }
 
 public sealed record WindowSettings(

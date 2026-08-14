@@ -24,23 +24,33 @@ internal sealed class AssemblyTrayIconResourceLoader : ITrayIconResourceLoader
 {
     internal const string ResourceName =
         "RunCatDashboard.App.Assets.RunCat.RunCatDashboard.Tray.ico";
+    internal const string WhiteResourceName =
+        "RunCatDashboard.App.Assets.RunCat.RunCatDashboard.Tray.White.ico";
 
     private readonly Assembly _assembly;
+    private readonly string _resourceName;
 
     internal AssemblyTrayIconResourceLoader()
-        : this(typeof(AssemblyTrayIconResourceLoader).Assembly)
+        : this(typeof(AssemblyTrayIconResourceLoader).Assembly, ResourceName)
     {
     }
 
     internal AssemblyTrayIconResourceLoader(Assembly assembly)
+        : this(assembly, ResourceName)
+    {
+    }
+
+    internal AssemblyTrayIconResourceLoader(Assembly assembly, string resourceName)
     {
         ArgumentNullException.ThrowIfNull(assembly);
+        ArgumentException.ThrowIfNullOrWhiteSpace(resourceName);
         _assembly = assembly;
+        _resourceName = resourceName;
     }
 
     public ITrayIconResource Load()
     {
-        return LoadResource(_assembly, ResourceName);
+        return LoadResource(_assembly, _resourceName);
     }
 
     internal static ITrayIconResource LoadResource(
@@ -75,18 +85,32 @@ internal sealed class AssemblyTrayAnimationIconResourceLoader
     internal const int FrameCount = 8;
     internal const string ResourceNamePrefix =
         "RunCatDashboard.App.Assets.RunCat.TrayAnimation.tray-cat-frame-";
+    internal const string WhiteResourceNamePrefix =
+        "RunCatDashboard.App.Assets.RunCat.TrayAnimation.White.tray-cat-frame-";
 
     private readonly Assembly _assembly;
+    private readonly string _resourceNamePrefix;
 
     internal AssemblyTrayAnimationIconResourceLoader()
-        : this(typeof(AssemblyTrayAnimationIconResourceLoader).Assembly)
+        : this(
+            typeof(AssemblyTrayAnimationIconResourceLoader).Assembly,
+            ResourceNamePrefix)
     {
     }
 
     internal AssemblyTrayAnimationIconResourceLoader(Assembly assembly)
+        : this(assembly, ResourceNamePrefix)
+    {
+    }
+
+    internal AssemblyTrayAnimationIconResourceLoader(
+        Assembly assembly,
+        string resourceNamePrefix)
     {
         ArgumentNullException.ThrowIfNull(assembly);
+        ArgumentException.ThrowIfNullOrWhiteSpace(resourceNamePrefix);
         _assembly = assembly;
+        _resourceNamePrefix = resourceNamePrefix;
     }
 
     public IReadOnlyList<ITrayIconResource> LoadFrames()
@@ -96,7 +120,7 @@ internal sealed class AssemblyTrayAnimationIconResourceLoader
         {
             for (int index = 0; index < FrameCount; index++)
             {
-                string resourceName = $"{ResourceNamePrefix}{index + 1:D2}.ico";
+                string resourceName = $"{_resourceNamePrefix}{index + 1:D2}.ico";
                 frames.Add(
                     AssemblyTrayIconResourceLoader.LoadResource(
                         _assembly,

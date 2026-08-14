@@ -10,6 +10,7 @@ using RunCatDashboard.App.Views;
 using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Settings;
 using RunCatDashboard.App.Startup;
+using RunCatDashboard.App.Theming;
 using RunCatDashboard.App.Windowing;
 using MessageBox = System.Windows.MessageBox;
 
@@ -175,6 +176,10 @@ public partial class App : System.Windows.Application
         ISettingsService settings = _serviceProvider.GetRequiredService<ISettingsService>();
         settings.LoadAsync().GetAwaiter().GetResult();
         AppSettings initial = settings.Current;
+        _serviceProvider.GetRequiredService<IThemeCoordinator>()
+            .ApplyPreferenceAsync(initial.Appearance.ThemePreference)
+            .GetAwaiter().GetResult();
+        RunCatFrameConverter.EnsureFramesLoaded();
         IRunAtLoginService runAtLogin = _serviceProvider.GetRequiredService<IRunAtLoginService>();
         runAtLogin.ReconcileAsync(initial.Startup.RunAtLoginRequested).GetAwaiter().GetResult();
         _serviceProvider.GetRequiredService<IWindowVisibilityCoordinator>()
@@ -232,6 +237,13 @@ public partial class App : System.Windows.Application
         services.AddSingleton<ISystemMetricsService, WindowsSystemMetricsService>();
         services.AddSingleton<IUiDispatcher>(
             _ => new WpfUiDispatcher(Current.Dispatcher));
+        services.AddSingleton<IWindowsAppThemeDetector, WindowsAppThemeDetector>();
+        services.AddSingleton<IThemeCoordinator>(provider =>
+            new ThemeCoordinator(
+                Current,
+                provider.GetRequiredService<IUiDispatcher>(),
+                provider.GetRequiredService<IWindowsAppThemeDetector>(),
+                provider.GetRequiredService<ILogger<ThemeCoordinator>>()));
         services.AddSingleton<IAnimationTimer>(
             _ => new DispatcherAnimationTimer(Current.Dispatcher));
         services.AddSingleton<IRunCatAnimationController>(provider =>
@@ -275,12 +287,19 @@ public partial class App : System.Windows.Application
         services.AddSingleton<ITrayIconAdapter>(
             _ => new NotifyIconTrayAdapter(
                 new AssemblyTrayIconResourceLoader(),
-                new AssemblyTrayAnimationIconResourceLoader()));
+                new AssemblyTrayAnimationIconResourceLoader(),
+                new AssemblyTrayIconResourceLoader(
+                    typeof(AssemblyTrayIconResourceLoader).Assembly,
+                    AssemblyTrayIconResourceLoader.WhiteResourceName),
+                new AssemblyTrayAnimationIconResourceLoader(
+                    typeof(AssemblyTrayAnimationIconResourceLoader).Assembly,
+                    AssemblyTrayAnimationIconResourceLoader.WhiteResourceNamePrefix)));
         services.AddSingleton<ITrayAnimationCoordinator>(provider =>
             new TrayAnimationCoordinator(
                 provider.GetRequiredService<ITrayIconAdapter>(),
                 provider.GetRequiredService<IRunCatAnimationController>(),
-                provider.GetRequiredService<ILogger<TrayAnimationCoordinator>>()));
+                provider.GetRequiredService<ILogger<TrayAnimationCoordinator>>(),
+                provider.GetRequiredService<IThemeCoordinator>()));
         services.AddSingleton<ISystemTrayService>(provider =>
             new SystemTrayService(
                 provider.GetRequiredService<ITrayIconAdapter>(),
@@ -299,7 +318,13 @@ public partial class App : System.Windows.Application
                 logger: provider.GetRequiredService<ILogger<OverlayDisplayMonitor>>(),
                 highFrequencyLogger: provider.GetRequiredService<ILoggerFactory>().CreateLogger(
                     $"{LoggingPolicy.HighFrequencyCategoryPrefix}.Fullscreen")));
-        services.AddSingleton<MainWindowViewModel>();
+        services.AddSingleton<MainWindowViewModel>(provider =>
+            new MainWindowViewModel(
+                provider.GetRequiredService<ISystemMetricsService>(),
+                provider.GetRequiredService<IUiDispatcher>(),
+                provider.GetRequiredService<IRunCatAnimationController>(),
+                provider.GetRequiredService<ILogger<MainWindowViewModel>>(),
+                provider.GetRequiredService<IThemeCoordinator>()));
         services.AddSingleton<ISettingsApplicationService>(provider =>
             new SettingsApplicationService(
                 provider.GetRequiredService<ISettingsService>(),
@@ -308,7 +333,8 @@ public partial class App : System.Windows.Application
                 provider.GetRequiredService<IGlobalHotKeyController>(),
                 provider.GetRequiredService<MainWindowViewModel>(),
                 provider.GetRequiredService<IRunAtLoginService>(),
-                provider.GetRequiredService<IUiDispatcher>()));
+                provider.GetRequiredService<IUiDispatcher>(),
+                provider.GetRequiredService<IThemeCoordinator>()));
         services.AddTransient<SettingsWindowViewModel>();
         services.AddTransient<SettingsWindow>();
         services.AddSingleton<ISettingsWindowService>(provider =>

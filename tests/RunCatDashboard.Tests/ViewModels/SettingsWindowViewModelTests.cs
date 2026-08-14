@@ -1,5 +1,6 @@
 using RunCatDashboard.App.Settings;
 using RunCatDashboard.App.Startup;
+using RunCatDashboard.App.Theming;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Windowing;
 
@@ -306,6 +307,56 @@ public sealed class SettingsWindowViewModelTests
     }
 
     [Fact]
+    public void ThemePreference_ParticipatesInStructuralDirtyState()
+    {
+        var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService());
+
+        Assert.Equal(ThemePreference.System, viewModel.ThemePreference);
+        viewModel.ThemePreference = ThemePreference.Dark;
+        Assert.True(viewModel.IsDirty);
+
+        viewModel.ThemePreference = ThemePreference.System;
+        Assert.False(viewModel.IsDirty);
+    }
+
+    [Fact]
+    public async Task ApplyTheme_UpdatesBaselineWithoutClosing()
+    {
+        var application = new FakeSettingsApplicationService();
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            ThemePreference = ThemePreference.Dark
+        };
+        int closes = 0;
+        viewModel.CloseRequested += () => closes++;
+
+        viewModel.ApplyCommand.Execute(null);
+        await viewModel.ApplyCommand.ExecutionTask!;
+
+        Assert.Equal(ThemePreference.Dark, application.LastThemePreference);
+        Assert.Equal(ThemePreference.Dark, application.Current.Appearance.ThemePreference);
+        Assert.False(viewModel.IsDirty);
+        Assert.Equal(0, closes);
+    }
+
+    [Fact]
+    public async Task ApplyThemeThenEditAndCancel_LeavesAppliedTheme()
+    {
+        var application = new FakeSettingsApplicationService();
+        var viewModel = new SettingsWindowViewModel(application)
+        {
+            ThemePreference = ThemePreference.Dark
+        };
+
+        viewModel.ApplyCommand.Execute(null);
+        await viewModel.ApplyCommand.ExecutionTask!;
+        viewModel.ThemePreference = ThemePreference.Light;
+        viewModel.CancelCommand.Execute(null);
+
+        Assert.Equal(ThemePreference.Dark, application.Current.Appearance.ThemePreference);
+    }
+
+    [Fact]
     public void EditAndRevert_TracksStructuralDirtyState()
     {
         var viewModel = new SettingsWindowViewModel(new FakeSettingsApplicationService());
@@ -567,6 +618,7 @@ public sealed class SettingsWindowViewModelTests
         internal (bool, OverlayInteractionMode, OverlayHotKeyGesture,
             OverlayHotKeyGesture, int, bool, OverlaySizeMode,
             OverlayFieldSettings, OverlayDisplayPolicy) LastDraft { get; private set; }
+        internal ThemePreference LastThemePreference { get; private set; }
         public async Task<RunAtLoginState> ApplyDraftAsync(
             bool dashboardVisible,
             OverlayInteractionMode interactionMode,
@@ -577,6 +629,7 @@ public sealed class SettingsWindowViewModelTests
             OverlaySizeMode sizeMode = OverlaySizeMode.Standard,
             OverlayFieldSettings? fields = null,
             OverlayDisplayPolicy displayPolicy = OverlayDisplayPolicy.HideOverFullscreenApps,
+            ThemePreference themePreference = ThemePreference.System,
             CancellationToken cancellationToken = default)
         {
             ApplyCount++;
@@ -595,6 +648,7 @@ public sealed class SettingsWindowViewModelTests
             }
             LastDraft = (dashboardVisible, interactionMode, interactionHotKey, visibilityHotKey,
                 samplingIntervalMilliseconds, runAtLoginRequested, sizeMode, fields, displayPolicy);
+            LastThemePreference = themePreference;
             CurrentDisplayPolicy = displayPolicy;
             Current = Current with
             {
@@ -605,7 +659,8 @@ public sealed class SettingsWindowViewModelTests
                 },
                 Overlay = new OverlaySettings(interactionMode, interactionHotKey, sizeMode, fields),
                 Metrics = new MetricsSettings(samplingIntervalMilliseconds),
-                Startup = new StartupSettings(runAtLoginRequested)
+                Startup = new StartupSettings(runAtLoginRequested),
+                Appearance = new AppearanceSettings(themePreference)
             };
             return new RunAtLoginState(runAtLoginRequested, runAtLoginRequested, null);
         }

@@ -3,11 +3,11 @@
 ## Schema 與儲存位置
 
 設定檔固定為 `%LocalAppData%\RunCatDashboard\settings.json`，目前 schema
-version 為 `4`：
+version 為 `5`：
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "window": {
     "left": -420.5,
     "top": 18.25,
@@ -46,6 +46,9 @@ version 為 `4`：
   },
   "startup": {
     "runAtLoginRequested": false
+  },
+  "appearance": {
+    "themePreference": "System"
   }
 }
 ```
@@ -65,9 +68,9 @@ mode。`interactionHotKey` 與 `visibilityHotKey` 都結構化保存 modifier �
 Windows 登入啟動關閉、`Standard` 與其預設欄位組合。
 sampling interval 僅接受 250、500、1000、2000、5000ms，非法值直接回 1000ms，
 不做 clamp。非法 interaction mode 回 `ClickThrough`；無效或不成對的位置回未設定。
-schema version 1、2 與 3 仍可讀取：所有既有 window、interaction mode、hotkey、
+schema version 1、2、3 與 4 仍可讀取：所有既有 window、interaction mode、hotkey、
 metrics 與 startup 值均保留，缺少的快捷鍵補各自預設值，presentation migration 為
-`Standard` defaults，下一次保存時寫為 version 4。
+`Standard` defaults；缺少或未知的 `appearance.themePreference` 使用 `System`，下一次保存時寫為 version 5。
 未知 `sizeMode` 回退 `Standard`；缺少 `fields` 時使用該 mode defaults。CatOnly 一律
 normalize 為全部欄位關閉。損壞 JSON 中非 CatOnly 的 CPU／Memory 皆關閉時回退該
 mode defaults；Settings Window draft 則明確拒絕保存，不靜默改值。

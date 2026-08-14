@@ -1,3 +1,5 @@
+using RunCatDashboard.App.Theming;
+
 namespace RunCatDashboard.App.Windowing;
 
 public interface ISystemTrayService : IDisposable
@@ -27,6 +29,8 @@ internal interface ITrayIconAdapter : IDisposable
     bool CanUseAnimatedIcons { get; }
 
     string? AnimationIconLoadError { get; }
+
+    void SetResolvedTheme(ResolvedTheme theme);
 
     void Show();
 
