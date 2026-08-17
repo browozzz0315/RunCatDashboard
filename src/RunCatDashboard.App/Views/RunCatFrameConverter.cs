@@ -41,6 +41,11 @@ public sealed class RunCatFrameConverter : IValueConverter, IMultiValueConverter
         ResolvedTheme theme = values.Length > 1 && values[1] is ResolvedTheme resolved
             ? resolved
             : ResolvedTheme.Light;
+        if (values.Length > 2 && values[2] is not null &&
+            values[2] != DependencyProperty.UnsetValue)
+        {
+            return values[2];
+        }
         return GetFrame(values.Length > 0 ? values[0] : null, theme);
     }
 
@@ -51,25 +56,9 @@ public sealed class RunCatFrameConverter : IValueConverter, IMultiValueConverter
         CultureInfo culture) => throw new NotSupportedException();
 
     internal static IReadOnlyList<BitmapSource> LoadFrames(ResolvedTheme theme)
-    {
-        var frames = new BitmapSource[RunCatAnimationController.DefaultFrameCount];
-        string folder = theme == ResolvedTheme.Dark ? "White/" : string.Empty;
-        for (int index = 0; index < frames.Length; index++)
-        {
-            var frame = new BitmapImage();
-            frame.BeginInit();
-            frame.CacheOption = BitmapCacheOption.OnLoad;
-            frame.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
-            frame.UriSource = new Uri(
-                $"pack://application:,,,/RunCatDashboard;component/Assets/RunCat/{folder}cat-frame-{index + 1:D2}.png",
-                UriKind.Absolute);
-            frame.EndInit();
-            frame.Freeze();
-            frames[index] = frame;
-        }
-
-        return Array.AsReadOnly(frames);
-    }
+        => theme == ResolvedTheme.Dark
+            ? RunCatBuiltInFrameProvider.WhiteFrames
+            : RunCatBuiltInFrameProvider.BlackFrames;
 
     internal static void EnsureFramesLoaded()
     {

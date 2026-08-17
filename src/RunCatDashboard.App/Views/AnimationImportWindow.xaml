@@ -1,0 +1,95 @@
+<Window x:Class="RunCatDashboard.App.Views.AnimationImportWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="匯入自訂 RunCat 動畫"
+        Width="520"
+        MinWidth="480"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        Style="{DynamicResource ThemeWindowStyle}">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.ColumnSpan="2"
+                   Margin="0,0,0,12"
+                   Text="選擇一張橫向 PNG sprite sheet。每幀等寬，沒有間距或 padding。"
+                   TextWrapping="Wrap" />
+        <Button Grid.Row="1"
+                Content="選擇 PNG"
+                Command="{Binding ChooseSourceCommand}"
+                Style="{DynamicResource ThemeButtonStyle}"
+                Margin="0,0,10,8" />
+        <TextBlock Grid.Row="1" Grid.Column="1"
+                   VerticalAlignment="Center"
+                   Text="{Binding SourcePath}"
+                   TextTrimming="CharacterEllipsis" />
+        <TextBlock Grid.Row="2" Text="顯示名稱" Margin="0,0,10,8" />
+        <TextBox Grid.Row="2" Grid.Column="1"
+                 Text="{Binding DisplayName, UpdateSourceTrigger=PropertyChanged}"
+                 Style="{DynamicResource ThemeTextBoxStyle}"
+                 Margin="0,0,0,8" />
+        <TextBlock Grid.Row="3" Text="幀數" Margin="0,0,10,8" />
+        <TextBox Grid.Row="3" Grid.Column="1"
+                 Text="{Binding FrameCount, UpdateSourceTrigger=PropertyChanged}"
+                 Style="{DynamicResource ThemeTextBoxStyle}"
+                 Margin="0,0,0,8" />
+        <TextBlock Grid.Row="4" Grid.ColumnSpan="2" Margin="0,0,0,8">
+            <Run Text="來源尺寸：" /><Run Text="{Binding SourceWidth}" />
+            <Run Text=" x " /><Run Text="{Binding SourceHeight}" />
+            <Run Text="　衍生幀尺寸：" /><Run Text="{Binding FrameWidth}" />
+            <Run Text=" x " /><Run Text="{Binding FrameHeight}" />
+        </TextBlock>
+        <Border Grid.Row="5" Grid.ColumnSpan="2"
+                MinHeight="120"
+                Background="{DynamicResource AppHistoryBackgroundBrush}"
+                BorderBrush="{DynamicResource AppBorderBrush}"
+                BorderThickness="1"
+                Padding="8">
+            <Image Source="{Binding PreviewFrame}"
+                   Stretch="Uniform"
+                   RenderOptions.BitmapScalingMode="NearestNeighbor"
+                   Width="100"
+                   Height="100" />
+        </Border>
+        <TextBlock Grid.Row="6" Grid.ColumnSpan="2"
+                   Text="{Binding StatusMessage}"
+                   Foreground="{DynamicResource AppMutedTextBrush}"
+                   Margin="0,8,0,0"
+                   TextWrapping="Wrap" />
+        <TextBlock Grid.Row="7" Grid.ColumnSpan="2"
+                   Text="{Binding ValidationError}"
+                   Foreground="{DynamicResource AppErrorBrush}"
+                   FontWeight="SemiBold"
+                   Margin="0,4,0,0"
+                   TextWrapping="Wrap" />
+        <StackPanel Grid.Row="8" Grid.ColumnSpan="2"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,12,0,0">
+            <Button Content="匯入"
+                    Command="{Binding ConfirmImportCommand}"
+                    Style="{DynamicResource ThemeButtonStyle}"
+                    MinWidth="80"
+                    Margin="0,0,8,0" />
+            <Button Content="取消"
+                    Command="{Binding CancelCommand}"
+                    IsCancel="True"
+                    Style="{DynamicResource ThemeButtonStyle}"
+                    MinWidth="80" />
+        </StackPanel>
+    </Grid>
+</Window>

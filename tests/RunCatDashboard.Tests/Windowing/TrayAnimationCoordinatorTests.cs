@@ -181,6 +181,19 @@ public sealed class TrayAnimationCoordinatorTests
     }
 
     [Fact]
+    public void SharedFrameOutsideTrayRange_MapsSafelyToBuiltInEightFrameSet()
+    {
+        var adapter = new FakeTrayIconAdapter();
+        var animation = new FakeRunCatAnimationController();
+        using var coordinator = new TrayAnimationCoordinator(adapter, animation);
+        coordinator.Initialize();
+
+        animation.FireFrame(15);
+
+        Assert.Equal(7, adapter.LastAnimatedFrame);
+    }
+
+    [Fact]
     public void ApplicationAssembly_HasOnlyOneAnimationTimerImplementation()
     {
         Type[] implementations = typeof(IRunCatAnimationController).Assembly

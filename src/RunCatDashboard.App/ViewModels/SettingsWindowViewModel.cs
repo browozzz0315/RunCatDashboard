@@ -1,5 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using System.IO;
+using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Settings;
 using RunCatDashboard.App.Theming;
 using RunCatDashboard.App.Windowing;
@@ -9,6 +11,9 @@ namespace RunCatDashboard.App.ViewModels;
 public sealed partial class SettingsWindowViewModel : ObservableObject
 {
     private readonly ISettingsApplicationService _applicationService;
+    private readonly AnimationCatalog? _animationCatalog;
+    private readonly IAnimationImportWindowService? _animationImportWindowService;
+    private readonly IAnimationManagementService? _animationManagementService;
     private SettingsDraft _baseline;
     private bool _isRefreshingDraft;
 
@@ -29,13 +34,29 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     [ObservableProperty] private OverlayFieldSettings _fields;
     [ObservableProperty] private OverlayDisplayPolicy _requestedDisplayPolicy;
     [ObservableProperty] private ThemePreference _themePreference;
+    [ObservableProperty] private string _selectedAnimationId =
+        AnimationSettings.BuiltInDefaultAnimationId;
+    [ObservableProperty] private AnimationSpeedPreference _speedPreference =
+        AnimationSpeedPreference.Normal;
     [ObservableProperty] private bool _isDirty;
     [ObservableProperty] private bool _isApplying;
 
     public SettingsWindowViewModel(ISettingsApplicationService applicationService)
+        : this(applicationService, null, null, null)
+    {
+    }
+
+    internal SettingsWindowViewModel(
+        ISettingsApplicationService applicationService,
+        AnimationCatalog? animationCatalog = null,
+        IAnimationImportWindowService? animationImportWindowService = null,
+        IAnimationManagementService? animationManagementService = null)
     {
         ArgumentNullException.ThrowIfNull(applicationService);
         _applicationService = applicationService;
+        _animationCatalog = animationCatalog;
+        _animationImportWindowService = animationImportWindowService;
+        _animationManagementService = animationManagementService;
         AppSettings settings = applicationService.Current;
         _isDashboardVisible = settings.Window.IsDashboardVisible;
         _interactionMode = settings.Overlay.InteractionMode;
@@ -51,6 +72,9 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _fields = settings.Overlay.Fields ?? OverlayFieldSettings.ForMode(_sizeMode);
         _requestedDisplayPolicy = applicationService.CurrentDisplayPolicy;
         _themePreference = settings.Appearance.ThemePreference;
+        _selectedAnimationId = settings.Animation.SelectedAnimationId ??
+            AnimationSettings.BuiltInDefaultAnimationId;
+        _speedPreference = settings.Animation.SpeedPreference;
         _baseline = CaptureDraft();
         SaveCommand = new AsyncRelayCommand(SaveAsync, () => !IsApplying);
         ApplyCommand = new AsyncRelayCommand(ApplyAsync, () => IsDirty && !IsApplying);
@@ -61,6 +85,15 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
                 CloseRequested?.Invoke();
             },
             () => !IsApplying);
+        ImportCommand = new RelayCommand(OpenAnimationImport);
+        DeleteCommand = new AsyncRelayCommand(
+            DeleteAnimationAsync,
+            () => !IsApplying &&
+                !string.Equals(
+                    SelectedAnimationId,
+                    AnimationSettings.BuiltInDefaultAnimationId,
+                    StringComparison.Ordinal));
+        RefreshAnimationOptions();
     }
 
     public IReadOnlyList<int> SamplingIntervals { get; } = [250, 500, 1000, 2000, 5000];
@@ -72,6 +105,10 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         Enum.GetValues<OverlayDisplayPolicy>();
     public IReadOnlyList<ThemePreference> ThemePreferences { get; } =
         Enum.GetValues<ThemePreference>();
+    public IReadOnlyList<AnimationSpeedPreference> AnimationSpeedPreferences { get; } =
+        Enum.GetValues<AnimationSpeedPreference>();
+    public IReadOnlyList<AnimationCatalogEntry> AnimationOptions { get; private set; } =
+        Array.Empty<AnimationCatalogEntry>();
     public bool IsFieldSelectionEnabled => SizeMode != OverlaySizeMode.CatOnly;
     public bool ShowCpu
     {
@@ -181,7 +218,11 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     public IAsyncRelayCommand SaveCommand { get; }
     public IAsyncRelayCommand ApplyCommand { get; }
     public IRelayCommand CancelCommand { get; }
+    public IRelayCommand ImportCommand { get; }
+    public IAsyncRelayCommand DeleteCommand { get; }
     public event Action? CloseRequested;
+
+    public event Action? AnimationCatalogChanged;
 
     public void BeginHotKeyCapture()
     {
@@ -271,7 +312,9 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
                 SizeMode,
                 Fields,
                 RequestedDisplayPolicy,
-                ThemePreference);
+                ThemePreference,
+                SelectedAnimationId,
+                SpeedPreference);
             RunAtLoginApplied = state.Applied;
             StartupFault = state.Fault;
             RefreshDraftAndBaselineFromAppliedState();
@@ -283,7 +326,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         }
         catch (Exception exception) when (
             exception is ArgumentException or HotKeyConfigurationException or
-                ThemeConfigurationException)
+                ThemeConfigurationException or AnimationValidationException)
         {
             ValidationError = GetUserFacingValidationMessage(exception);
         }
@@ -303,7 +346,9 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         SizeMode,
         Fields,
         RequestedDisplayPolicy,
-        ThemePreference);
+        ThemePreference,
+        SelectedAnimationId,
+        SpeedPreference);
 
     private void RefreshDraftAndBaselineFromAppliedState()
     {
@@ -323,6 +368,9 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
             Fields = settings.Overlay.Fields ?? OverlayFieldSettings.ForMode(SizeMode);
             RequestedDisplayPolicy = _applicationService.CurrentDisplayPolicy;
             ThemePreference = settings.Appearance.ThemePreference;
+            SelectedAnimationId = settings.Animation.SelectedAnimationId ??
+                AnimationSettings.BuiltInDefaultAnimationId;
+            SpeedPreference = settings.Animation.SpeedPreference;
         }
         finally
         {
@@ -367,6 +415,11 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         }
 
         if (exception is ThemeConfigurationException)
+        {
+            return exception.Message;
+        }
+
+        if (exception is AnimationValidationException)
         {
             return exception.Message;
         }
@@ -467,6 +520,12 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     partial void OnRunAtLoginRequestedChanged(bool value) => DraftChanged();
     partial void OnRequestedDisplayPolicyChanged(OverlayDisplayPolicy value) => DraftChanged();
     partial void OnThemePreferenceChanged(ThemePreference value) => DraftChanged();
+    partial void OnSelectedAnimationIdChanged(string value)
+    {
+        DeleteCommand.NotifyCanExecuteChanged();
+        DraftChanged();
+    }
+    partial void OnSpeedPreferenceChanged(AnimationSpeedPreference value) => DraftChanged();
 
     partial void OnIsDirtyChanged(bool value) => ApplyCommand.NotifyCanExecuteChanged();
 
@@ -475,6 +534,58 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         SaveCommand.NotifyCanExecuteChanged();
         ApplyCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
+        DeleteCommand.NotifyCanExecuteChanged();
+    }
+
+    private void OpenAnimationImport()
+    {
+        if (_animationImportWindowService is null)
+        {
+            ValidationError = "自訂動畫匯入功能目前無法使用。";
+            return;
+        }
+
+        _animationImportWindowService.Open(entry =>
+        {
+            RefreshAnimationOptions();
+            SelectedAnimationId = entry.Id;
+            AnimationCatalogChanged?.Invoke();
+        });
+    }
+
+    private async Task DeleteAnimationAsync()
+    {
+        if (_animationManagementService is null ||
+            string.Equals(
+                SelectedAnimationId,
+                AnimationSettings.BuiltInDefaultAnimationId,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ValidationError = null;
+        try
+        {
+            await _animationManagementService.DeleteAsync(SelectedAnimationId);
+            RefreshAnimationOptions();
+            SelectedAnimationId = AnimationSettings.BuiltInDefaultAnimationId;
+            AnimationCatalogChanged?.Invoke();
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or InvalidOperationException or IOException)
+        {
+            ValidationError = exception.Message;
+        }
+    }
+
+    internal void RefreshAnimationOptions()
+    {
+        _animationCatalog?.Refresh();
+        AnimationOptions = _animationCatalog?.Entries
+            .Where(entry => entry.IsValid)
+            .ToArray() ?? Array.Empty<AnimationCatalogEntry>();
+        OnPropertyChanged(nameof(AnimationOptions));
     }
 
     private sealed record SettingsDraft(
@@ -487,5 +598,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         OverlaySizeMode SizeMode,
         OverlayFieldSettings Fields,
         OverlayDisplayPolicy DisplayPolicy,
-        ThemePreference ThemePreference);
+        ThemePreference ThemePreference,
+        string SelectedAnimationId,
+        AnimationSpeedPreference SpeedPreference);
 }

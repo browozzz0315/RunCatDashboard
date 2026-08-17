@@ -21,4 +21,7 @@ public interface IRunCatAnimationController : IDisposable
     void Stop();
 
     bool UpdateInterval(TimeSpan interval);
+
+    bool ReplaceFrameSet(int frameCount) =>
+        throw new NotSupportedException("This animation controller does not support frame-set replacement.");
 }

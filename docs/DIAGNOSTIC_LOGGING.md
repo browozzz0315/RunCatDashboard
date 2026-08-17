@@ -17,6 +17,7 @@ DI、settings、Run-at-login、ViewModel、MainWindow、HWND 與 native initiali
 
 - Data：`%LocalAppData%\RunCatDashboard`
 - Logs：`%LocalAppData%\RunCatDashboard\Logs`
+- Custom animations：`%LocalAppData%\RunCatDashboard\Animations`
 
 日誌不得寫入 repository、執行目錄或安裝目錄。固定預設為：
 
@@ -54,7 +55,8 @@ high-frequency Trace，也不得逐 animation frame 記錄。
 事件使用 message template 及適用的 structured fields，例如 `Operation`、
 `Subsystem`、`RequestedState`、`AppliedState`、`FaultState`、`NativeErrorCode`、
 `HResult`、`SettingsVersion`、`FullscreenPolicy`、`HotKeyId`、`WindowsSessionId`
-與 `ApplicationVersion`。Error／Critical 包含 exception；Win32 failure 在可取得時
+與 `ApplicationVersion`。Animation events 另可包含 `AnimationId`、`ErrorCategory`、
+`FormatVersion`、`Dimensions` 與 `FrameCount`。Error／Critical 包含 exception；Win32 failure 在可取得時
 保留 native error code、HRESULT 與 requested／applied／fault context。
 
 正常等級只記 lifecycle、semantic state transition、fault episode 的第一次 failure
@@ -69,6 +71,15 @@ Global hotkey 記錄首次 registration failure、runtime replacement rollback f
 startup fallback 與 fault recovery；相同持續 fault 仍依 episode 節流。不得記錄每次
 正常 `WM_HOTKEY` 或按鍵事件。使用者介面只顯示可處理的中文訊息，native error code
 與 HRESULT 僅進 structured log。
+
+Animation 記錄 import publish failure、stale temporary cleanup failure、corrupt catalog
+entry、missing／corrupt selected animation fallback、fallback repair failure、custom
+frame-load failure 與 deletion failure。使用者可修正的 sprite-sheet validation error
+顯示在 import window，不以 high-severity runtime fault 記錄。不得記錄完整 source path、
+manifest JSON 或未清理的 display name；只記錄 animation ID、檔案名稱、dimensions、
+frame count、format version、error category 與必要的 HRESULT/native code。
+fallback repair 成功記為 `Recovered`；repair failure 會讓 runtime 保持 built-in animation，
+並記為 `Faulted`。
 
 ## Startup、fallback 與 shutdown
 
@@ -100,5 +111,5 @@ sampling status/failure，以及使用者可理解且需要處理的 Warning／E
 未清理長使用者輸入或不必要的完整使用者資料夾路徑。路徑優先記檔名、相對路徑或資料
 目錄類型。日誌只保留在本機，不上傳。
 
-Logging policy 不持久化。Issue #32 將 `settings.json` schema 升為 version 3，
-但不新增 logging section或 Logging Settings UI。
+Logging policy 不持久化。Issue #26 將 `settings.json` schema 升為 version 6，新增
+top-level `animation` section；不新增 logging section 或 Logging Settings UI。

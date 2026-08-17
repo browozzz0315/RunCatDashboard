@@ -1,4 +1,5 @@
 using RunCatDashboard.App.Startup;
+using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Services;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Windowing;
@@ -24,6 +25,35 @@ public interface ISettingsApplicationService
         OverlayDisplayPolicy displayPolicy = OverlayDisplayPolicy.HideOverFullscreenApps,
         ThemePreference themePreference = ThemePreference.System,
         CancellationToken cancellationToken = default);
+
+    Task<RunAtLoginState> ApplyDraftAsync(
+        bool dashboardVisible,
+        OverlayInteractionMode interactionMode,
+        OverlayHotKeyGesture interactionHotKey,
+        OverlayHotKeyGesture visibilityHotKey,
+        int samplingIntervalMilliseconds,
+        bool runAtLoginRequested,
+        OverlaySizeMode sizeMode,
+        OverlayFieldSettings? fields,
+        OverlayDisplayPolicy displayPolicy,
+        ThemePreference themePreference,
+        string selectedAnimationId,
+        AnimationSpeedPreference speedPreference,
+        CancellationToken cancellationToken = default)
+    {
+        return ApplyDraftAsync(
+            dashboardVisible,
+            interactionMode,
+            interactionHotKey,
+            visibilityHotKey,
+            samplingIntervalMilliseconds,
+            runAtLoginRequested,
+            sizeMode,
+            fields,
+            displayPolicy,
+            themePreference,
+            cancellationToken);
+    }
 }
 
 internal sealed class SettingsApplicationService : ISettingsApplicationService
@@ -36,6 +66,7 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
     private readonly IRunAtLoginService _runAtLogin;
     private readonly IUiDispatcher _uiDispatcher;
     private readonly IThemeCoordinator? _themeCoordinator;
+    private readonly RunCatAnimationRuntime? _animationRuntime;
 
     internal SettingsApplicationService(
         ISettingsService settings,
@@ -45,7 +76,8 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         MainWindowViewModel mainViewModel,
         IRunAtLoginService runAtLogin,
         IUiDispatcher uiDispatcher,
-        IThemeCoordinator? themeCoordinator = null)
+        IThemeCoordinator? themeCoordinator = null,
+        RunCatAnimationRuntime? animationRuntime = null)
     {
         _settings = settings;
         _visibility = visibility;
@@ -55,6 +87,7 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         _runAtLogin = runAtLogin;
         _uiDispatcher = uiDispatcher;
         _themeCoordinator = themeCoordinator;
+        _animationRuntime = animationRuntime;
     }
 
     public AppSettings Current => _settings.Current;
@@ -62,7 +95,7 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
     public OverlayDisplayPolicy CurrentDisplayPolicy =>
         _mainViewModel.RequestedDisplayPolicy;
 
-    public async Task<RunAtLoginState> ApplyDraftAsync(
+    public Task<RunAtLoginState> ApplyDraftAsync(
         bool dashboardVisible,
         OverlayInteractionMode interactionMode,
         OverlayHotKeyGesture interactionHotKey,
@@ -73,6 +106,38 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         OverlayFieldSettings? fields = null,
         OverlayDisplayPolicy displayPolicy = OverlayDisplayPolicy.HideOverFullscreenApps,
         ThemePreference themePreference = ThemePreference.System,
+        CancellationToken cancellationToken = default)
+    {
+        AppSettings current = Current;
+        return ApplyDraftAsync(
+            dashboardVisible,
+            interactionMode,
+            interactionHotKey,
+            visibilityHotKey,
+            samplingIntervalMilliseconds,
+            runAtLoginRequested,
+            sizeMode,
+            fields,
+            displayPolicy,
+            themePreference,
+            current.Animation.SelectedAnimationId ?? AnimationSettings.BuiltInDefaultAnimationId,
+            current.Animation.SpeedPreference,
+            cancellationToken);
+    }
+
+    public async Task<RunAtLoginState> ApplyDraftAsync(
+        bool dashboardVisible,
+        OverlayInteractionMode interactionMode,
+        OverlayHotKeyGesture interactionHotKey,
+        OverlayHotKeyGesture visibilityHotKey,
+        int samplingIntervalMilliseconds,
+        bool runAtLoginRequested,
+        OverlaySizeMode sizeMode,
+        OverlayFieldSettings? fields,
+        OverlayDisplayPolicy displayPolicy,
+        ThemePreference themePreference,
+        string selectedAnimationId,
+        AnimationSpeedPreference speedPreference,
         CancellationToken cancellationToken = default)
     {
         if (!Enum.IsDefined(interactionMode))
@@ -86,6 +151,16 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
             throw new ArgumentOutOfRangeException(nameof(displayPolicy));
         if (!Enum.IsDefined(themePreference))
             throw new ArgumentOutOfRangeException(nameof(themePreference));
+        if (string.IsNullOrWhiteSpace(selectedAnimationId))
+            selectedAnimationId = AnimationSettings.BuiltInDefaultAnimationId;
+        selectedAnimationId = selectedAnimationId.Trim();
+        if (!Enum.IsDefined(speedPreference))
+            throw new ArgumentOutOfRangeException(nameof(speedPreference));
+        if (_animationRuntime is not null &&
+            _animationRuntime.Catalog.Find(selectedAnimationId) is not { IsValid: true })
+        {
+            throw new ArgumentException("選取的動畫不存在或已損壞。", nameof(selectedAnimationId));
+        }
         ArgumentNullException.ThrowIfNull(interactionHotKey);
         ArgumentNullException.ThrowIfNull(visibilityHotKey);
         if (!interactionHotKey.TryValidate(out string? hotKeyValidationError))
@@ -117,6 +192,12 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
             fields != (previous.Overlay.Fields ??
                 OverlayFieldSettings.ForMode(previous.Overlay.SizeMode));
         bool themeChanged = themePreference != previous.Appearance.ThemePreference;
+        string previousAnimationId = previous.Animation.SelectedAnimationId ??
+            AnimationSettings.BuiltInDefaultAnimationId;
+        AnimationSpeedPreference previousSpeed = previous.Animation.SpeedPreference;
+        bool animationSelectionChanged = selectedAnimationId != previousAnimationId;
+        bool animationSpeedChanged = speedPreference != previousSpeed;
+        bool animationChanged = animationSelectionChanged || animationSpeedChanged;
         AppSettings? mergeBase = null;
         AppSettings? mergedCandidate = null;
 
@@ -168,9 +249,15 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
             }
         }
 
+        bool animationRuntimeChanged = false;
         bool saved;
         try
         {
+            if (animationSelectionChanged && _animationRuntime is not null)
+            {
+                _animationRuntime.ApplySelection(selectedAnimationId);
+                animationRuntimeChanged = true;
+            }
             saved = await _settings
                 .TryReplaceCurrentAsync(
                     latest =>
@@ -188,6 +275,8 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
                             fields,
                             themePreference,
                             themeChanged,
+                            selectedAnimationId,
+                            speedPreference,
                             latestSnapshot => mergeBase = latestSnapshot);
                         mergedCandidate = candidate;
                         return candidate;
@@ -197,6 +286,14 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         }
         catch
         {
+            if (animationRuntimeChanged && _animationRuntime is not null)
+            {
+                try { _animationRuntime.ApplySelection(previousAnimationId); }
+                catch (Exception rollbackException)
+                {
+                    RecordRollbackFailure("runtime-animation", rollbackException);
+                }
+            }
             bool visibilityRollbackSucceeded = RollBackGesture(
                 visibilityResult,
                 () => _hotKeys.ApplyVisibilityGesture(previousVisibility),
@@ -214,6 +311,14 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         }
         if (!saved)
         {
+            if (animationRuntimeChanged && _animationRuntime is not null)
+            {
+                try { _animationRuntime.ApplySelection(previousAnimationId); }
+                catch (Exception rollbackException)
+                {
+                    RecordRollbackFailure("runtime-animation", rollbackException);
+                }
+            }
             bool visibilityRollbackSucceeded = RollBackGesture(
                 visibilityResult,
                 () => _hotKeys.ApplyVisibilityGesture(previousVisibility),
@@ -267,7 +372,8 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
                                 presentationChanged,
                                 interactionChanged,
                                 visibilityChanged,
-                                themeChanged),
+                                themeChanged,
+                                animationChanged),
                             cancellationToken)
                         .ConfigureAwait(false);
                 }
@@ -306,6 +412,15 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
                     RecordRollbackFailure("theme", themeRollbackFailure);
                 }
 
+                if (animationRuntimeChanged && _animationRuntime is not null)
+                {
+                    try { _animationRuntime.ApplySelection(previousAnimationId); }
+                    catch (Exception rollbackException)
+                    {
+                        RecordRollbackFailure("runtime-animation", rollbackException);
+                    }
+                }
+
                 throw;
             }
         }
@@ -321,6 +436,9 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         _interaction.RequestMode(applied.Overlay.InteractionMode);
         _mainViewModel.UpdateSamplingInterval(
             TimeSpan.FromMilliseconds(applied.Metrics.SamplingIntervalMilliseconds));
+        double baseInterval = _animationRuntime?.Catalog
+            .Find(applied.Animation.SelectedAnimationId)?.BaseFrameIntervalMilliseconds ?? 250d;
+        _mainViewModel.ApplyAnimationTiming(baseInterval, applied.Animation.SpeedPreference);
         RunAtLoginState state = await _runAtLogin
             .ReconcileAsync(applied.Startup.RunAtLoginRequested, cancellationToken)
             .ConfigureAwait(false);
@@ -378,6 +496,8 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         OverlayFieldSettings fields,
         ThemePreference themePreference,
         bool themeChanged,
+        string selectedAnimationId,
+        AnimationSpeedPreference speedPreference,
         Action<AppSettings>? observeLatest = null)
     {
         observeLatest?.Invoke(latest);
@@ -407,6 +527,13 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         ThemePreference effectiveTheme = themeChanged
             ? themePreference
             : latest.Appearance.ThemePreference;
+        AnimationSettings effectiveAnimation =
+            latest.Animation != previous.Animation
+                ? latest.Animation
+                : new AnimationSettings(
+                    selectedAnimationId,
+                    speedPreference,
+                    AnimationSettings.CurrentFormatVersion);
 
         return latest with
         {
@@ -424,7 +551,8 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
             },
             Metrics = effectiveMetrics,
             Startup = effectiveStartup,
-            Appearance = new AppearanceSettings(effectiveTheme)
+            Appearance = new AppearanceSettings(effectiveTheme),
+            Animation = effectiveAnimation
         };
     }
 
@@ -440,7 +568,8 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
         bool presentationChanged,
         bool interactionHotKeyChanged,
         bool visibilityHotKeyChanged,
-        bool themeChanged)
+        bool themeChanged,
+        bool animationChanged)
     {
         bool dashboardVisible = RestoreValue(
             previous.Window.IsDashboardVisible,
@@ -496,6 +625,12 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
             mergeBase.Appearance.ThemePreference,
             latest.Appearance.ThemePreference,
             themeChanged);
+        AnimationSettings animation = RestoreValue(
+            previous.Animation,
+            applied.Animation,
+            mergeBase.Animation,
+            latest.Animation,
+            animationChanged);
 
         return latest with
         {
@@ -513,7 +648,8 @@ internal sealed class SettingsApplicationService : ISettingsApplicationService
             },
             Metrics = metrics,
             Startup = startup,
-            Appearance = new AppearanceSettings(theme)
+            Appearance = new AppearanceSettings(theme),
+            Animation = animation
         };
     }
 

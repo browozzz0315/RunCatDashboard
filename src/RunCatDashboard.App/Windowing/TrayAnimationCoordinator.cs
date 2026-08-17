@@ -167,7 +167,10 @@ internal sealed class TrayAnimationCoordinator : ITrayAnimationCoordinator
     {
         try
         {
-            _adapter.SetAnimatedFrame(frameIndex);
+            int trayFrameCount = AssemblyTrayAnimationIconResourceLoader.FrameCount;
+            int safeTrayFrameIndex =
+                ((frameIndex % trayFrameCount) + trayFrameCount) % trayFrameCount;
+            _adapter.SetAnimatedFrame(safeTrayFrameIndex);
             if (_frameFaultEpisode.Observe(isFaulted: false) == FaultEpisodeTransition.Recovered)
             {
                 TryLogRecovery("AssignTrayAnimationFrame");

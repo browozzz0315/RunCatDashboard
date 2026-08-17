@@ -44,6 +44,29 @@
                               Style="{DynamicResource ThemeComboBoxStyle}" />
                 </StackPanel>
             </GroupBox>
+            <GroupBox Header="RunCat 動畫" Padding="12" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="目前動畫" Margin="0,0,0,4" />
+                    <ComboBox ItemsSource="{Binding AnimationOptions}"
+                              SelectedValuePath="Id"
+                              SelectedValue="{Binding SelectedAnimationId}"
+                              Margin="0,0,0,8" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Content="匯入 PNG sprite sheet"
+                                Command="{Binding ImportCommand}"
+                                Margin="0,0,8,0" />
+                        <Button Content="刪除自訂動畫"
+                                Command="{Binding DeleteCommand}" />
+                    </StackPanel>
+                    <TextBlock Text="播放速度" Margin="0,0,0,4" />
+                    <ComboBox ItemsSource="{Binding AnimationSpeedPreferences}"
+                              SelectedItem="{Binding SpeedPreference}" />
+                    <TextBlock Text="Slow 0.75x、Normal 1.00x、Fast 1.25x；匯入動畫基準間隔固定為 250ms。"
+                               Foreground="{DynamicResource AppMutedTextBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,8,0,0" />
+                </StackPanel>
+            </GroupBox>
             <GroupBox Header="Overlay 顯示" Padding="12" Margin="0,0,0,12">
                 <StackPanel>
                     <TextBlock Text="尺寸模式" Margin="0,0,0,4" />

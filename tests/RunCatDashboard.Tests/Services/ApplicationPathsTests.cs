@@ -14,6 +14,9 @@ public sealed class ApplicationPathsTests
 
         Assert.Equal(Path.Combine(root, "RunCatDashboard"), paths.DataDirectory);
         Assert.Equal(Path.Combine(root, "RunCatDashboard", "Logs"), paths.LogsDirectory);
+        Assert.Equal(
+            Path.Combine(root, "RunCatDashboard", "Animations"),
+            paths.AnimationsDirectory);
         Assert.Equal(42, paths.WindowsSessionId);
         Assert.False(paths.LogsDirectory.StartsWith(AppContext.BaseDirectory, StringComparison.OrdinalIgnoreCase));
     }

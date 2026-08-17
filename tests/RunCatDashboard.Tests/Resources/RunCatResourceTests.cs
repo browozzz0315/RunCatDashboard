@@ -9,9 +9,11 @@ using RunCatDashboard.App.Animation;
 using RunCatDashboard.App.Settings;
 using RunCatDashboard.App.Theming;
 using RunCatDashboard.App.Views;
+using RunCatDashboard.Tests.Support;
 
 namespace RunCatDashboard.Tests.Resources;
 
+[Collection("WPF Application lifecycle")]
 public sealed class RunCatResourceTests
 {
     private const int ExpectedFrameCount = RunCatAnimationController.DefaultFrameCount;
@@ -121,9 +123,15 @@ public sealed class RunCatResourceTests
         var thread = new Thread(() =>
         {
             Application? application = null;
+            bool ownsApplication = false;
             try
             {
-                application = new Application();
+                application = Application.Current;
+                if (application is null)
+                {
+                    application = new Application();
+                    ownsApplication = true;
+                }
                 var firstConverter = new RunCatFrameConverter();
                 var secondConverter = new RunCatFrameConverter();
 
@@ -163,7 +171,10 @@ public sealed class RunCatResourceTests
             }
             finally
             {
-                application?.Shutdown();
+                if (ownsApplication)
+                {
+                    application!.Shutdown();
+                }
             }
         });
         thread.SetApartmentState(ApartmentState.STA);

@@ -79,6 +79,7 @@
                                 <MultiBinding Converter="{StaticResource RunCatFrameConverter}">
                                     <Binding Path="AnimationFrameIndex" />
                                     <Binding Path="ResolvedTheme" />
+                                    <Binding Path="AnimationFrame" />
                                 </MultiBinding>
                             </Image.Source>
                         </Image>

@@ -59,6 +59,18 @@ public static class AppSettingsValidator
                 ? settings.Appearance.ThemePreference
                 : ThemePreference.System;
 
+        AnimationSettings? animation = settings.Animation;
+        bool supportedAnimationFormat = animation?.FormatVersion == AnimationSettings.CurrentFormatVersion;
+        string? selectedAnimationId = !supportedAnimationFormat ||
+            string.IsNullOrWhiteSpace(animation?.SelectedAnimationId)
+            ? AnimationSettings.BuiltInDefaultAnimationId
+            : animation!.SelectedAnimationId!.Trim();
+        AnimationSpeedPreference speedPreference = supportedAnimationFormat && animation is not null &&
+            Enum.IsDefined(animation.SpeedPreference)
+                ? animation.SpeedPreference
+                : AnimationSpeedPreference.Normal;
+        int animationFormatVersion = AnimationSettings.CurrentFormatVersion;
+
         return new AppSettings(
             AppSettings.CurrentVersion,
             new WindowSettings(
@@ -70,7 +82,11 @@ public static class AppSettingsValidator
             new MetricsSettings(interval),
             new StartupSettings(settings.Startup?.RunAtLoginRequested ?? false))
         {
-            Appearance = new AppearanceSettings(themePreference)
+            Appearance = new AppearanceSettings(themePreference),
+            Animation = new AnimationSettings(
+                selectedAnimationId,
+                speedPreference,
+                animationFormatVersion)
         };
     }
 
