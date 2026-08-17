@@ -54,6 +54,7 @@ internal sealed class JsonSettingsStore : ISettingsStore
         SerializerOptions.Converters.Add(new LenientOverlaySizeModeConverter());
         SerializerOptions.Converters.Add(new LenientOverlayHotKeyKeyConverter());
         SerializerOptions.Converters.Add(new LenientThemePreferenceConverter());
+        SerializerOptions.Converters.Add(new LenientAnimationSpeedPreferenceConverter());
     }
 
     private readonly string _directory;
@@ -91,7 +92,7 @@ internal sealed class JsonSettingsStore : ISettingsStore
                 element.TryGetInt32(out int parsedVersion)
                     ? parsedVersion
                     : 0;
-            if (version is not 1 and not 2 and not 3 and not 4 &&
+            if (version is not 1 and not 2 and not 3 and not 4 and not 5 &&
                 version != AppSettings.CurrentVersion)
             {
                 string backup = BackupInvalidFile($"unsupported-v{version}");
@@ -351,6 +352,35 @@ internal sealed class JsonSettingsStore : ISettingsStore
         public override void Write(
             Utf8JsonWriter writer,
             ThemePreference value,
+            JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
+    }
+
+    private sealed class LenientAnimationSpeedPreferenceConverter
+        : JsonConverter<AnimationSpeedPreference>
+    {
+        public override AnimationSpeedPreference Read(
+            ref Utf8JsonReader reader,
+            Type typeToConvert,
+            JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String &&
+                Enum.TryParse(reader.GetString(), ignoreCase: true,
+                    out AnimationSpeedPreference preference))
+            {
+                return preference;
+            }
+
+            if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out int numeric))
+            {
+                return (AnimationSpeedPreference)numeric;
+            }
+
+            return (AnimationSpeedPreference)(-1);
+        }
+
+        public override void Write(
+            Utf8JsonWriter writer,
+            AnimationSpeedPreference value,
             JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
     }
 

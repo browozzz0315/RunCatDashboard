@@ -2,9 +2,11 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Xml.Linq;
+using RunCatDashboard.Tests.Support;
 
 namespace RunCatDashboard.Tests.Views;
 
+[Collection("WPF Application lifecycle")]
 public sealed class ThemeResourceStructureTests
 {
     private static readonly string[] RequiredKeys =
@@ -146,8 +148,20 @@ public sealed class ThemeResourceStructureTests
         Exception? failure = null;
         var thread = new Thread(() =>
         {
+            Application? application = Application.Current;
+            bool ownsApplication = false;
+
             try
             {
+                if (application is null)
+                {
+                    application = new Application
+                    {
+                        ShutdownMode = ShutdownMode.OnExplicitShutdown
+                    };
+                    ownsApplication = true;
+                }
+
                 foreach (string fileName in new[] { "Light.xaml", "Dark.xaml" })
                 {
                     ResourceDictionary resources = new()
@@ -176,6 +190,13 @@ public sealed class ThemeResourceStructureTests
             catch (Exception exception)
             {
                 failure = exception;
+            }
+            finally
+            {
+                if (ownsApplication)
+                {
+                    application!.Shutdown();
+                }
             }
         });
 

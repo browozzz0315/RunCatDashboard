@@ -12,9 +12,11 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
     private readonly ILogger<RunCatAnimationController> _logger;
     private readonly FaultEpisodeTracker _faultEpisode = new();
     private bool _isRunning;
+    private bool _startRequested;
     private bool _isDisposed;
     private long _generation;
     private int _frameIndex;
+    private int _frameCount;
     private TimeSpan _interval = CpuAnimationSpeedMapper.SlowestInterval;
     private string? _lastFault;
 
@@ -29,14 +31,23 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
         _timer = timer;
         _logger = logger ??
             Microsoft.Extensions.Logging.Abstractions.NullLogger<RunCatAnimationController>.Instance;
-        FrameCount = frameCount;
+        _frameCount = frameCount;
     }
 
     public event Action<int>? FrameChanged;
 
     public event Action<string>? Faulted;
 
-    public int FrameCount { get; }
+    public int FrameCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _frameCount;
+            }
+        }
+    }
 
     public int FrameIndex
     {
@@ -89,7 +100,14 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_isDisposed, this);
-            if (_isRunning || FrameCount == 1)
+            if (_isRunning)
+            {
+                _startRequested = true;
+                return false;
+            }
+
+            _startRequested = true;
+            if (_frameCount == 1)
             {
                 return false;
             }
@@ -124,6 +142,7 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
                 if (generation == _generation)
                 {
                     _isRunning = false;
+                    _startRequested = false;
                     _generation++;
                 }
             }
@@ -138,10 +157,12 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
         {
             if (!_isRunning)
             {
+                _startRequested = false;
                 return;
             }
 
             _isRunning = false;
+            _startRequested = false;
             _generation++;
         }
 
@@ -171,9 +192,84 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
 
         if (isRunning)
         {
-            _timer.UpdateInterval(interval);
+            try
+            {
+                _timer.UpdateInterval(interval);
+            }
+            catch (ObjectDisposedException) when (IsDisposed())
+            {
+                return false;
+            }
         }
 
+        return true;
+    }
+
+    public bool ReplaceFrameSet(int frameCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(frameCount, 1);
+
+        Action<int>? handlers;
+        bool shouldStart;
+        bool shouldStop;
+        long generation;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_isDisposed, this);
+            _frameCount = frameCount;
+            _frameIndex = 0;
+            handlers = FrameChanged;
+            shouldStop = _isRunning && frameCount == 1;
+            if (shouldStop)
+            {
+                _isRunning = false;
+                generation = ++_generation;
+            }
+            else
+            {
+                generation = _generation;
+            }
+            shouldStart = _startRequested && !_isRunning && frameCount > 1;
+            if (shouldStart)
+            {
+                _isRunning = true;
+                generation = ++_generation;
+            }
+        }
+
+        if (shouldStop)
+        {
+            _timer.Stop();
+        }
+
+        if (shouldStart)
+        {
+            try
+            {
+                if (!_timer.Start(
+                    Interval,
+                    () => OnTick(generation),
+                    message => RecordFault(generation, message)))
+                {
+                    throw new InvalidOperationException(
+                        "The run-cat animation timer was already running unexpectedly.");
+                }
+            }
+            catch
+            {
+                lock (_gate)
+                {
+                    if (generation == _generation)
+                    {
+                        _isRunning = false;
+                        _generation++;
+                    }
+                }
+                throw;
+            }
+        }
+
+        PublishFrame(generation, 0, handlers);
         return true;
     }
 
@@ -188,6 +284,7 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
 
             _isDisposed = true;
             _isRunning = false;
+            _startRequested = false;
             _generation++;
         }
 
@@ -206,9 +303,25 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
                 return;
             }
 
-            _frameIndex = (_frameIndex + 1) % FrameCount;
+            _frameIndex = (_frameIndex + 1) % _frameCount;
             nextFrame = _frameIndex;
             handlers = FrameChanged;
+        }
+
+        PublishFrame(generation, nextFrame, handlers);
+    }
+
+    private void PublishFrame(
+        long generation,
+        int frameIndex,
+        Action<int>? handlers)
+    {
+        lock (_gate)
+        {
+            if (_isDisposed || generation != _generation)
+            {
+                return;
+            }
         }
 
         if (handlers is null)
@@ -222,7 +335,7 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
         {
             try
             {
-                handler(nextFrame);
+                handler(frameIndex);
             }
             catch (Exception exception)
             {
@@ -324,6 +437,14 @@ internal sealed class RunCatAnimationController : IRunCatAnimationController
         }
         catch
         {
+        }
+    }
+
+    private bool IsDisposed()
+    {
+        lock (_gate)
+        {
+            return _isDisposed;
         }
     }
 

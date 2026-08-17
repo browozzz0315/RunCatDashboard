@@ -8,6 +8,7 @@ using RunCatDashboard.App.Startup;
 using RunCatDashboard.App.Theming;
 using RunCatDashboard.App.ViewModels;
 using RunCatDashboard.App.Windowing;
+using RunCatDashboard.Tests.Support;
 
 namespace RunCatDashboard.Tests.Settings;
 
@@ -880,6 +881,61 @@ public sealed class SettingsApplicationServiceTests
     }
 
     [Fact]
+    public async Task ApplyCommand_OffDispatcherContinuation_LeavesRealAnimationRuntimeUsable()
+    {
+        using var dispatcherThread = new DispatcherTestThread();
+        var dispatcher = dispatcherThread.Dispatcher;
+        DispatcherAnimationTimer timer = dispatcherThread.Invoke(
+            () => new DispatcherAnimationTimer(dispatcher));
+        RunCatAnimationController controller = dispatcherThread.Invoke(
+            () => new RunCatAnimationController(timer));
+        await using MainWindowViewModel mainViewModel = dispatcherThread.Invoke(
+            () => new MainWindowViewModel(
+                new NoOpMetricsService(),
+                new WpfUiDispatcher(dispatcher),
+                controller));
+
+        var operations = new List<string>();
+        var saveGate = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var settings = new FakeSettingsService(operations)
+        {
+            SaveGate = saveGate
+        };
+        var service = new SettingsApplicationService(
+            settings,
+            new WindowVisibilityCoordinator(),
+            new FakeInteractionAction(),
+            new FakeHotKeyController(operations),
+            mainViewModel,
+            new FakeRunAtLoginService(),
+            new WpfUiDispatcher(dispatcher));
+        var viewModel = new SettingsWindowViewModel(service)
+        {
+            SamplingIntervalMilliseconds = 500
+        };
+
+        Task apply = Task.Run(async () =>
+        {
+            viewModel.ApplyCommand.Execute(null);
+            await viewModel.ApplyCommand.ExecutionTask!;
+        });
+        await settings.SaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        saveGate.SetResult();
+        await apply.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Null(viewModel.ValidationError);
+        Assert.False(viewModel.IsDirty);
+        Assert.Equal(500, settings.Current.Metrics.SamplingIntervalMilliseconds);
+
+        Exception? updateException = await Task.Run(
+            () => Record.Exception(
+                () => controller.UpdateInterval(TimeSpan.FromMilliseconds(125))));
+        Assert.Null(updateException);
+        Assert.Equal(TimeSpan.FromMilliseconds(125), controller.Interval);
+    }
+
+    [Fact]
     public async Task ApplyDraft_ConcurrentPresentationAndPositionWinOverStaleDraft()
     {
         OverlayFieldSettings concurrentFields =
@@ -974,6 +1030,9 @@ public sealed class SettingsApplicationServiceTests
         public AppSettings Current { get; private set; } = AppSettings.Defaults;
         internal bool SaveSucceeds { get; init; } = true;
         internal Func<AppSettings, AppSettings>? BeforeReplacement { get; init; }
+        internal TaskCompletionSource? SaveGate { get; init; }
+        internal TaskCompletionSource SaveStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal List<AppSettings> PersistedSettings { get; } = [];
         public string? LastDiagnostic => null;
         public event Action<AppSettings>? Changed;
@@ -986,14 +1045,19 @@ public sealed class SettingsApplicationServiceTests
             Changed?.Invoke(Current);
             return true;
         }
-        public Task<bool> TryReplaceCurrentAsync(
+        public async Task<bool> TryReplaceCurrentAsync(
             Func<AppSettings, AppSettings> replacement,
             CancellationToken cancellationToken = default)
         {
             operations.Add("save-settings");
+            SaveStarted.TrySetResult();
+            if (SaveGate is not null)
+            {
+                await SaveGate.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
             if (!SaveSucceeds)
             {
-                return Task.FromResult(false);
+                return false;
             }
             if (BeforeReplacement is not null)
             {
@@ -1002,7 +1066,7 @@ public sealed class SettingsApplicationServiceTests
             Current = AppSettingsValidator.Normalize(replacement(Current));
             PersistedSettings.Add(Current);
             Changed?.Invoke(Current);
-            return Task.FromResult(true);
+            return true;
         }
         public Task FlushAsync(CancellationToken cancellationToken = default)
         {

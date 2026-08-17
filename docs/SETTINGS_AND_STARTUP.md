@@ -3,11 +3,11 @@
 ## Schema 與儲存位置
 
 設定檔固定為 `%LocalAppData%\RunCatDashboard\settings.json`，目前 schema
-version 為 `5`：
+version 為 `6`：
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "window": {
     "left": -420.5,
     "top": 18.25,
@@ -49,6 +49,11 @@ version 為 `5`：
   },
   "appearance": {
     "themePreference": "System"
+  },
+  "animation": {
+    "selectedAnimationId": "builtin.cat2-run",
+    "speedPreference": "Normal",
+    "formatVersion": 1
   }
 }
 ```
@@ -68,12 +73,17 @@ mode。`interactionHotKey` 與 `visibilityHotKey` 都結構化保存 modifier �
 Windows 登入啟動關閉、`Standard` 與其預設欄位組合。
 sampling interval 僅接受 250、500、1000、2000、5000ms，非法值直接回 1000ms，
 不做 clamp。非法 interaction mode 回 `ClickThrough`；無效或不成對的位置回未設定。
-schema version 1、2、3 與 4 仍可讀取：所有既有 window、interaction mode、hotkey、
+schema version 1、2、3、4 與 5 仍可讀取：所有既有 window、interaction mode、hotkey、
 metrics 與 startup 值均保留，缺少的快捷鍵補各自預設值，presentation migration 為
-`Standard` defaults；缺少或未知的 `appearance.themePreference` 使用 `System`，下一次保存時寫為 version 5。
+`Standard` defaults；缺少或未知的 `appearance.themePreference` 使用 `System`，下一次保存時寫為 version 6。
 未知 `sizeMode` 回退 `Standard`；缺少 `fields` 時使用該 mode defaults。CatOnly 一律
 normalize 為全部欄位關閉。損壞 JSON 中非 CatOnly 的 CPU／Memory 皆關閉時回退該
 mode defaults；Settings Window draft 則明確拒絕保存，不靜默改值。
+缺少 `animation` section 時使用 `builtin.cat2-run`、`Normal` 與 format version 1。
+缺少或空白的 selected ID 使用 built-in；非空但 catalog 找不到的 ID 會保留到 catalog
+resolution，讓啟動 fallback diagnostic 能指出 missing animation。未知 speed 使用
+`Normal`。不支援的 animation settings format 會安全 normalize 成 built-in behavior。
+future unsupported top-level schema 的 backup／defaults 行為維持不變。
 無效或缺少的單一快捷鍵只回退該組預設；合法自訂值不會被 normalize 覆蓋。
 快捷鍵 JSON 只保存 `control`、`alt`、`shift`、`windows` 與 `key`；`DisplayText`
 及 `UsageWarning` 是 runtime 衍生值，不屬於持久化契約。舊 version 3 檔案若包含
@@ -164,6 +174,11 @@ fullscreen policy draft。切換成另一個 size mode 時套用該 mode default
 dirty 與舊錯誤。Save 與 Apply 共用相同驗證及 application pipeline；dirty Save 成功後關閉，
 clean Save 不重複保存而直接關閉。Cancel 與標題列 X 只捨棄最新 baseline 後的 draft 並關閉，
 不 rollback 先前成功的 Apply。套用中會停用三個動作並暫時阻止標題列關閉，避免重疊交易。
+同一個 draft 也包含 `selectedAnimationId` 與 `speedPreference`；動畫 section 參與 baseline、
+structural dirty comparison、Apply、Save、Cancel 與 concurrent merge。匯入成功後 library
+item 立即保留，Cancel 只捨棄尚未 Apply 的 animation settings，不刪除 library item。
+完整 sprite-sheet import 使用獨立的 transient `AnimationImportWindow`，不把 preview
+或 PNG slicing workflow 塞入 Settings Window。
 Apply／dirty Save 先驗證兩組快捷鍵及彼此不得相同，再要求 Windows-specific controller
 分別套用。每組相同新舊值是
 no-op；不同值只解除及註冊該組，新組合失敗時 rollback 該組原值且不更新 current 或

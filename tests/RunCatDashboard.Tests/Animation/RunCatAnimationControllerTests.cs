@@ -1,6 +1,7 @@
 using RunCatDashboard.Tests.Diagnostics;
 using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Animation;
+using RunCatDashboard.Tests.Support;
 
 namespace RunCatDashboard.Tests.Animation;
 
@@ -148,6 +149,33 @@ public sealed class RunCatAnimationControllerTests
     }
 
     [Fact]
+    public async Task Dispose_FromWorkerThread_MarshalsTimerLifecycleOperations()
+    {
+        using var dispatcherThread = new DispatcherTestThread();
+        DispatcherAnimationTimer timer = dispatcherThread.Invoke(
+            () => new DispatcherAnimationTimer(dispatcherThread.Dispatcher));
+        var controller = dispatcherThread.Invoke(
+            () => new RunCatAnimationController(timer));
+
+        try
+        {
+            Assert.True(dispatcherThread.Invoke(() => controller.Start()));
+
+            Exception? exception = await Task.Run(
+                () => Record.Exception(controller.Dispose));
+
+            Assert.Null(exception);
+            Assert.False(dispatcherThread.Invoke(() => controller.IsRunning));
+            Assert.IsType<ObjectDisposedException>(
+                dispatcherThread.Invoke(() => Record.Exception(() => controller.Start())));
+        }
+        finally
+        {
+            controller.Dispose();
+        }
+    }
+
+    [Fact]
     public void UpdateInterval_BeforeStart_IsUsedByFirstTimerStart()
     {
         var timer = new FakeAnimationTimer();
@@ -158,6 +186,43 @@ public sealed class RunCatAnimationControllerTests
 
         Assert.Equal(TimeSpan.FromMilliseconds(80), timer.Interval);
         Assert.Equal(0, timer.UpdateCount);
+    }
+
+    [Fact]
+    public void ReplaceFrameSet_ResetsToZeroPublishesImmediatelyAndKeepsOneTimer()
+    {
+        var timer = new FakeAnimationTimer();
+        using var controller = new RunCatAnimationController(timer);
+        var published = new List<int>();
+        controller.FrameChanged += published.Add;
+        controller.Start();
+        timer.Fire();
+
+        controller.ReplaceFrameSet(3);
+
+        Assert.Equal(3, controller.FrameCount);
+        Assert.Equal(0, controller.FrameIndex);
+        Assert.Equal(0, published[^1]);
+        Assert.Equal(1, timer.StartCount);
+        timer.Fire();
+        Assert.Equal(1, controller.FrameIndex);
+    }
+
+    [Fact]
+    public void ReplaceFrameSet_ToSingleFrameStopsTimerAndCanRestartWhenFramesReturn()
+    {
+        var timer = new FakeAnimationTimer();
+        using var controller = new RunCatAnimationController(timer);
+        controller.Start();
+
+        controller.ReplaceFrameSet(1);
+        Assert.False(controller.IsRunning);
+        Assert.Equal(1, timer.StopCount);
+
+        controller.ReplaceFrameSet(4);
+        Assert.True(controller.IsRunning);
+        Assert.Equal(2, timer.StartCount);
+        Assert.Equal(0, controller.FrameIndex);
     }
 
     [Fact]

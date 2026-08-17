@@ -23,6 +23,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private readonly ISystemMetricsService _systemMetricsService;
     private readonly IUiDispatcher _uiDispatcher;
     private readonly IRunCatAnimationController _animationController;
+    private readonly IRunCatFrameSource? _frameSource;
     private readonly BoundedHistory<SystemMetricsSnapshot> _cpuHistoryBuffer;
     private readonly ILogger<MainWindowViewModel> _logger;
     private readonly IThemeCoordinator? _themeCoordinator;
@@ -40,6 +41,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private CancellationTokenSource? _samplingCancellationSource;
     private Task? _samplingTask;
     private bool _isDisposed;
+    private double _animationBaseFrameIntervalMilliseconds =
+        AnimationTimingCalculator.DefaultBaseFrameIntervalMilliseconds;
+    private AnimationSpeedPreference _animationSpeedPreference = AnimationSpeedPreference.Normal;
 
     [ObservableProperty]
     private string _cpuUsageText = "--";
@@ -71,6 +75,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
 
     [ObservableProperty]
     private int _animationFrameIndex;
+
+    [ObservableProperty]
+    private object? _animationFrame;
 
     [ObservableProperty]
     private bool _isAnimationRunning;
@@ -174,7 +181,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         IUiDispatcher uiDispatcher,
         IRunCatAnimationController animationController,
         ILogger<MainWindowViewModel>? logger = null,
-        IThemeCoordinator? themeCoordinator = null)
+        IThemeCoordinator? themeCoordinator = null,
+        IRunCatFrameSource? frameSource = null)
         : this(
             systemMetricsService,
             uiDispatcher,
@@ -183,7 +191,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
             DefaultSamplingInterval,
             Task.Delay,
             logger,
-            themeCoordinator)
+            themeCoordinator,
+            frameSource)
     {
     }
 
@@ -195,7 +204,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         TimeSpan samplingInterval,
         Func<TimeSpan, CancellationToken, Task> delayAsync,
         ILogger<MainWindowViewModel>? logger = null,
-        IThemeCoordinator? themeCoordinator = null)
+        IThemeCoordinator? themeCoordinator = null,
+        IRunCatFrameSource? frameSource = null)
     {
         ArgumentNullException.ThrowIfNull(systemMetricsService);
         ArgumentNullException.ThrowIfNull(uiDispatcher);
@@ -206,6 +216,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         _systemMetricsService = systemMetricsService;
         _uiDispatcher = uiDispatcher;
         _animationController = animationController;
+        _frameSource = frameSource;
         _cpuHistoryBuffer = new BoundedHistory<SystemMetricsSnapshot>(cpuHistoryCapacity);
         _samplingIntervalTicks = samplingInterval.Ticks;
         _delayAsync = delayAsync;
@@ -220,6 +231,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
             _themeCoordinator.ResolvedThemeChanged += OnThemeCoordinatorResolvedThemeChanged;
         }
         _animationController.UpdateInterval(CpuAnimationSpeedMapper.SlowestInterval);
+        if (_frameSource is not null)
+        {
+            AnimationFrame = _frameSource.GetFrame(AnimationFrameIndex);
+        }
     }
 
     internal void ApplyOverlayState(
@@ -287,6 +302,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     internal void ReportTrayError(string? message)
     {
         TrayErrorMessage = message;
+    }
+
+    internal void ReportAnimationError(string? message)
+    {
+        AnimationErrorMessage = message;
     }
 
     internal void ReportPlacementError(string? message)
@@ -450,6 +470,22 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
         }
     }
 
+    internal void ApplyAnimationTiming(
+        double baseFrameIntervalMilliseconds,
+        AnimationSpeedPreference speedPreference)
+    {
+        if (!double.IsFinite(baseFrameIntervalMilliseconds) || baseFrameIntervalMilliseconds <= 0)
+        {
+            baseFrameIntervalMilliseconds = AnimationTimingCalculator.DefaultBaseFrameIntervalMilliseconds;
+        }
+
+        _animationBaseFrameIntervalMilliseconds = baseFrameIntervalMilliseconds;
+        _animationSpeedPreference = Enum.IsDefined(speedPreference)
+            ? speedPreference
+            : AnimationSpeedPreference.Normal;
+        UpdateAnimationSpeed();
+    }
+
     private async Task RunSamplingLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -565,7 +601,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
             _cpuHistoryBuffer
                 .GetSnapshot()
                 .Select(snapshot => snapshot.CpuUsagePercent));
-        TimeSpan interval = CpuAnimationSpeedMapper.Map(averageCpu);
+        TimeSpan interval = AnimationTimingCalculator.Calculate(
+            averageCpu,
+            _animationBaseFrameIntervalMilliseconds,
+            _animationSpeedPreference);
 
         _animationController.UpdateInterval(interval);
     }
@@ -573,6 +612,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private void OnAnimationFrameChanged(int frameIndex)
     {
         AnimationFrameIndex = frameIndex;
+        if (_frameSource is not null)
+        {
+            AnimationFrame = _frameSource.GetFrame(frameIndex);
+        }
     }
 
     private void OnAnimationFaulted(string message)
@@ -583,6 +626,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     private void OnThemeCoordinatorResolvedThemeChanged(ResolvedTheme theme)
     {
         ResolvedTheme = theme;
+        if (_frameSource is not null &&
+            string.Equals(
+                _frameSource.ActiveAnimationId,
+                AnimationSettings.BuiltInDefaultAnimationId,
+                StringComparison.Ordinal))
+        {
+            _frameSource.SetBuiltIn(theme);
+            AnimationFrame = _frameSource.GetFrame(AnimationFrameIndex);
+        }
     }
 
     private void ApplySamplingError(Exception exception)

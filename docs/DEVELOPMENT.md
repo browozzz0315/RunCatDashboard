@@ -71,7 +71,7 @@ repeated exit/relaunch checks.
 Settings tests use injectable file and Registry adapters and never modify the
 real HKCU Run key. Before release, follow
 [`SETTINGS_AND_STARTUP.md`](SETTINGS_AND_STARTUP.md): inspect schema v1 under
-LocalAppData and its schema v4 migration, malformed/unsupported backups, hidden startup without Show/Hide
+LocalAppData and its schema v6 migration, animation catalog fallback, malformed/unsupported backups, hidden startup without Show/Hide
 flicker, multi-monitor placement, runtime sampling changes, Settings Save/Cancel,
 quoted executable reconciliation, and explicit shutdown flush. Debug output may
 be locked by a running app; do not terminate a user process, and verify with

@@ -25,10 +25,33 @@ internal sealed class DispatcherAnimationTimer : IAnimationTimer
         Action callback,
         Action<string> faultCallback)
     {
-        _dispatcher.VerifyAccess();
         ValidateInterval(interval);
         ArgumentNullException.ThrowIfNull(callback);
         ArgumentNullException.ThrowIfNull(faultCallback);
+
+        return InvokeOnOwningDispatcher(
+            () => StartOnOwningDispatcher(interval, callback, faultCallback));
+    }
+
+    public bool UpdateInterval(TimeSpan interval)
+    {
+        ValidateInterval(interval);
+
+        return InvokeOnOwningDispatcher(() => UpdateIntervalOnOwningDispatcher(interval));
+    }
+
+    public void Stop() => InvokeOnOwningDispatcher(StopOnOwningDispatcher);
+
+    public void Dispose() => InvokeOnOwningDispatcher(DisposeOnOwningDispatcher);
+
+    internal TimeSpan CurrentInterval =>
+        InvokeOnOwningDispatcher(() => _timer.Interval);
+
+    private bool StartOnOwningDispatcher(
+        TimeSpan interval,
+        Action callback,
+        Action<string> faultCallback)
+    {
         ObjectDisposedException.ThrowIf(_isDisposed, this);
 
         if (_isRunning)
@@ -44,10 +67,8 @@ internal sealed class DispatcherAnimationTimer : IAnimationTimer
         return true;
     }
 
-    public bool UpdateInterval(TimeSpan interval)
+    private bool UpdateIntervalOnOwningDispatcher(TimeSpan interval)
     {
-        _dispatcher.VerifyAccess();
-        ValidateInterval(interval);
         ObjectDisposedException.ThrowIf(_isDisposed, this);
 
         if (_timer.Interval == interval)
@@ -59,9 +80,8 @@ internal sealed class DispatcherAnimationTimer : IAnimationTimer
         return true;
     }
 
-    public void Stop()
+    private void StopOnOwningDispatcher()
     {
-        _dispatcher.VerifyAccess();
         if (!_isRunning)
         {
             return;
@@ -73,17 +93,37 @@ internal sealed class DispatcherAnimationTimer : IAnimationTimer
         _faultCallback = null;
     }
 
-    public void Dispose()
+    private void DisposeOnOwningDispatcher()
     {
-        _dispatcher.VerifyAccess();
         if (_isDisposed)
         {
             return;
         }
 
-        Stop();
+        StopOnOwningDispatcher();
         _timer.Tick -= OnTick;
         _isDisposed = true;
+    }
+
+    private T InvokeOnOwningDispatcher<T>(Func<T> action)
+    {
+        if (_dispatcher.CheckAccess())
+        {
+            return action();
+        }
+
+        return _dispatcher.Invoke(action);
+    }
+
+    private void InvokeOnOwningDispatcher(Action action)
+    {
+        if (_dispatcher.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        _dispatcher.Invoke(action);
     }
 
     private void OnTick(object? sender, EventArgs e)

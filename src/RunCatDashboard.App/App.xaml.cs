@@ -180,6 +180,40 @@ public partial class App : System.Windows.Application
             .ApplyPreferenceAsync(initial.Appearance.ThemePreference)
             .GetAwaiter().GetResult();
         RunCatFrameConverter.EnsureFramesLoaded();
+        Animation.RunCatAnimationRuntime animationRuntime =
+            _serviceProvider.GetRequiredService<Animation.RunCatAnimationRuntime>();
+        Animation.AnimationResolution animationResolution = animationRuntime.Initialize(
+            initial.Animation.SelectedAnimationId ?? AnimationSettings.BuiltInDefaultAnimationId);
+        if (animationResolution.UsedFallback)
+        {
+            bool repaired = settings.TryReplaceCurrentAsync(
+                current => current with
+                {
+                    Animation = current.Animation with
+                    {
+                        SelectedAnimationId = AnimationSettings.BuiltInDefaultAnimationId,
+                        FormatVersion = AnimationSettings.CurrentFormatVersion
+                    }
+                }).GetAwaiter().GetResult();
+            if (!repaired)
+            {
+                _lifecycleLogger.LogWarning(
+                    "Selected animation fallback repair failed. {Operation} {Subsystem} {ErrorCategory} {FaultState}",
+                    "RepairSelectedAnimationFallback",
+                    "Animation",
+                    animationResolution.DiagnosticCategory,
+                    "Faulted");
+            }
+            else
+            {
+                _lifecycleLogger.LogInformation(
+                    "Selected animation fallback was repaired. {Operation} {Subsystem} {ErrorCategory} {FaultState}",
+                    "RepairSelectedAnimationFallback",
+                    "Animation",
+                    animationResolution.DiagnosticCategory,
+                    "Recovered");
+            }
+        }
         IRunAtLoginService runAtLogin = _serviceProvider.GetRequiredService<IRunAtLoginService>();
         runAtLogin.ReconcileAsync(initial.Startup.RunAtLoginRequested).GetAwaiter().GetResult();
         _serviceProvider.GetRequiredService<IWindowVisibilityCoordinator>()
@@ -188,11 +222,19 @@ public partial class App : System.Windows.Application
             .TrySetMode(initial.Overlay.InteractionMode);
         MainWindowViewModel mainViewModel =
             _serviceProvider.GetRequiredService<MainWindowViewModel>();
+        animationRuntime.DiagnosticChanged += mainViewModel.ReportAnimationError;
         mainViewModel.UpdateSamplingInterval(TimeSpan.FromMilliseconds(
             initial.Metrics.SamplingIntervalMilliseconds));
         mainViewModel.ApplyOverlayPresentation(
             initial.Overlay.SizeMode,
             initial.Overlay.Fields ?? OverlayFieldSettings.ForMode(initial.Overlay.SizeMode));
+        mainViewModel.ReportAnimationError(
+            animationResolution.UsedFallback ? animationResolution.Diagnostic : null);
+        RunCatDashboard.App.Animation.AnimationCatalogEntry? initialAnimation =
+            animationRuntime.Catalog.Find(settings.Current.Animation.SelectedAnimationId);
+        mainViewModel.ApplyAnimationTiming(
+            initialAnimation?.BaseFrameIntervalMilliseconds ?? 250,
+            settings.Current.Animation.SpeedPreference);
 
         var mainWindow = _serviceProvider.GetRequiredService<MainWindow>();
         MainWindow = mainWindow;
@@ -225,6 +267,19 @@ public partial class App : System.Windows.Application
             _ => new JsonSettingsStore(
                 applicationPaths.DataDirectory,
                 new PhysicalSettingsFileSystem()));
+        services.AddSingleton<Animation.AnimationLibraryStorage>(
+            _ => new Animation.AnimationLibraryStorage(applicationPaths.AnimationsDirectory));
+        services.AddSingleton<Animation.AnimationCatalog>(provider =>
+            new Animation.AnimationCatalog(
+                provider.GetRequiredService<Animation.AnimationLibraryStorage>(),
+                provider.GetRequiredService<ILogger<Animation.AnimationCatalog>>()));
+        services.AddSingleton<Animation.SpriteSheetParser>();
+        services.AddSingleton<Animation.AnimationImportService>(provider =>
+            new Animation.AnimationImportService(
+                provider.GetRequiredService<Animation.SpriteSheetParser>(),
+                provider.GetRequiredService<Animation.AnimationLibraryStorage>(),
+                provider.GetRequiredService<Animation.AnimationCatalog>(),
+                provider.GetRequiredService<ILogger<Animation.AnimationImportService>>()));
         services.AddSingleton<ISettingsService>(provider =>
             new SettingsService(
                 provider.GetRequiredService<ISettingsStore>(),
@@ -244,12 +299,23 @@ public partial class App : System.Windows.Application
                 provider.GetRequiredService<IUiDispatcher>(),
                 provider.GetRequiredService<IWindowsAppThemeDetector>(),
                 provider.GetRequiredService<ILogger<ThemeCoordinator>>()));
+        services.AddSingleton<Animation.IRunCatFrameSource>(provider =>
+            new Animation.RunCatFrameSource(
+                provider.GetRequiredService<IThemeCoordinator>().ResolvedTheme));
         services.AddSingleton<IAnimationTimer>(
             _ => new DispatcherAnimationTimer(Current.Dispatcher));
         services.AddSingleton<IRunCatAnimationController>(provider =>
             new RunCatAnimationController(
                 provider.GetRequiredService<IAnimationTimer>(),
                 logger: provider.GetRequiredService<ILogger<RunCatAnimationController>>()));
+        services.AddSingleton<Animation.RunCatAnimationRuntime>(provider =>
+            new Animation.RunCatAnimationRuntime(
+                provider.GetRequiredService<Animation.AnimationCatalog>(),
+                provider.GetRequiredService<Animation.AnimationLibraryStorage>(),
+                provider.GetRequiredService<Animation.IRunCatFrameSource>(),
+                provider.GetRequiredService<IRunCatAnimationController>(),
+                provider.GetRequiredService<IThemeCoordinator>(),
+                provider.GetRequiredService<ILogger<Animation.RunCatAnimationRuntime>>()));
         services.AddSingleton<IOverlayWindowController>(provider =>
             new OverlayWindowController(
                 new Win32NativeWindowStyleApi(),
@@ -324,7 +390,23 @@ public partial class App : System.Windows.Application
                 provider.GetRequiredService<IUiDispatcher>(),
                 provider.GetRequiredService<IRunCatAnimationController>(),
                 provider.GetRequiredService<ILogger<MainWindowViewModel>>(),
-                provider.GetRequiredService<IThemeCoordinator>()));
+                provider.GetRequiredService<IThemeCoordinator>(),
+                provider.GetRequiredService<Animation.IRunCatFrameSource>()));
+        services.AddSingleton<IAnimationManagementService>(provider =>
+            new Animation.AnimationManagementService(
+                provider.GetRequiredService<ISettingsService>(),
+                provider.GetRequiredService<Animation.RunCatAnimationRuntime>(),
+                provider.GetRequiredService<Animation.AnimationCatalog>(),
+                provider.GetRequiredService<ILogger<Animation.AnimationManagementService>>()));
+        services.AddSingleton<IAnimationFilePicker, Animation.WindowsAnimationFilePicker>();
+        services.AddTransient<AnimationImportWindowViewModel>(provider =>
+            new AnimationImportWindowViewModel(
+                provider.GetRequiredService<Animation.IAnimationFilePicker>(),
+                provider.GetRequiredService<Animation.AnimationImportService>()));
+        services.AddTransient<AnimationImportWindow>();
+        services.AddSingleton<IAnimationImportWindowService>(provider =>
+            new AnimationImportWindowService(
+                () => provider.GetRequiredService<AnimationImportWindow>()));
         services.AddSingleton<ISettingsApplicationService>(provider =>
             new SettingsApplicationService(
                 provider.GetRequiredService<ISettingsService>(),
@@ -334,8 +416,14 @@ public partial class App : System.Windows.Application
                 provider.GetRequiredService<MainWindowViewModel>(),
                 provider.GetRequiredService<IRunAtLoginService>(),
                 provider.GetRequiredService<IUiDispatcher>(),
-                provider.GetRequiredService<IThemeCoordinator>()));
-        services.AddTransient<SettingsWindowViewModel>();
+                provider.GetRequiredService<IThemeCoordinator>(),
+                provider.GetRequiredService<Animation.RunCatAnimationRuntime>()));
+        services.AddTransient<SettingsWindowViewModel>(provider =>
+            new SettingsWindowViewModel(
+                provider.GetRequiredService<ISettingsApplicationService>(),
+                provider.GetRequiredService<Animation.AnimationCatalog>(),
+                provider.GetRequiredService<IAnimationImportWindowService>(),
+                provider.GetRequiredService<IAnimationManagementService>()));
         services.AddTransient<SettingsWindow>();
         services.AddSingleton<ISettingsWindowService>(provider =>
             new SettingsWindowService(() => provider.GetRequiredService<SettingsWindow>()));

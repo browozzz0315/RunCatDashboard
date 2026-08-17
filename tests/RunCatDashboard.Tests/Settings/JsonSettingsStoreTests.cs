@@ -23,12 +23,12 @@ public sealed class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task SchemaV5_RoundTripsAllContractFields()
+    public async Task SchemaV6_RoundTripsAllContractFields()
     {
         var visibilityHotKey = new OverlayHotKeyGesture(
             false, true, true, true, OverlayHotKeyKey.F11);
         var expected = new AppSettings(
-            5,
+            6,
             new WindowSettings(-420.5, 18.25, false, visibilityHotKey),
             new OverlaySettings(
                 OverlayInteractionMode.Interactive,
@@ -39,7 +39,11 @@ public sealed class JsonSettingsStoreTests : IDisposable
             new MetricsSettings(5000),
             new StartupSettings(true))
         {
-            Appearance = new AppearanceSettings(ThemePreference.Dark)
+            Appearance = new AppearanceSettings(ThemePreference.Dark),
+            Animation = new AnimationSettings(
+                "custom-0123456789abcdef0123456789abcdef",
+                AnimationSpeedPreference.Fast,
+                AnimationSettings.CurrentFormatVersion)
         };
         var store = CreateStore();
 
@@ -48,8 +52,10 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         Assert.Equal(expected, result.Settings);
         string json = await File.ReadAllTextAsync(Path.Combine(_directory, "settings.json"));
-        Assert.Contains("\"version\": 5", json);
+        Assert.Contains("\"version\": 6", json);
         Assert.Contains("\"themePreference\": \"Dark\"", json);
+        Assert.Contains("\"selectedAnimationId\": \"custom-0123456789abcdef0123456789abcdef\"", json);
+        Assert.Contains("\"speedPreference\": \"Fast\"", json);
         Assert.Contains("\"sizeMode\": \"Expanded\"", json);
         Assert.Contains("\"showHotKeyHints\": true", json);
         Assert.Contains("\"visibilityHotKey\"", json);
@@ -126,7 +132,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         SettingsLoadResult result = await CreateStore().LoadAsync();
 
-        Assert.Equal(5, result.Settings.Version);
+        Assert.Equal(6, result.Settings.Version);
         Assert.Equal(ThemePreference.System, result.Settings.Appearance.ThemePreference);
         Assert.Equal(
             new WindowSettings(
@@ -166,7 +172,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         SettingsLoadResult result = await CreateStore().LoadAsync();
 
-        Assert.Equal(5, result.Settings.Version);
+        Assert.Equal(6, result.Settings.Version);
         Assert.Equal(ThemePreference.System, result.Settings.Appearance.ThemePreference);
         Assert.Equal(OverlayHotKeyGesture.DashboardVisibilityDefault,
             result.Settings.Window.VisibilityHotKey);
@@ -197,7 +203,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         SettingsLoadResult result = await CreateStore().LoadAsync();
 
-        Assert.Equal(5, result.Settings.Version);
+        Assert.Equal(6, result.Settings.Version);
         Assert.Equal(ThemePreference.System, result.Settings.Appearance.ThemePreference);
         Assert.Equal(10, result.Settings.Window.Left);
         Assert.Equal(20, result.Settings.Window.Top);
@@ -223,7 +229,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
         SettingsLoadResult result = await CreateStore().LoadAsync();
 
         Assert.Null(result.Diagnostic);
-        Assert.Equal(5, result.Settings.Version);
+        Assert.Equal(6, result.Settings.Version);
         Assert.Equal(ThemePreference.System, result.Settings.Appearance.ThemePreference);
     }
 
