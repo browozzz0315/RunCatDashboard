@@ -24,6 +24,7 @@ internal interface ITrayIconAdapter : IDisposable
     event Action? InteractionToggleRequested;
     event Action? AnimationToggleRequested;
     event Action? SettingsRequested;
+    event Action? OpenLogsDirectoryRequested;
     event Action? ExitRequested;
 
     bool CanUseAnimatedIcons { get; }

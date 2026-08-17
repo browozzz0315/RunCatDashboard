@@ -1,6 +1,8 @@
+using System.IO;
 using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Diagnostics;
 using RunCatDashboard.App.Interop;
+using RunCatDashboard.App.Services;
 
 namespace RunCatDashboard.App.Windowing;
 
@@ -14,6 +16,8 @@ internal sealed class SystemTrayService : ISystemTrayService
     private readonly IInteractionModeToggleAction _interactionToggleAction;
     private readonly IApplicationExitCoordinator _exitCoordinator;
     private readonly ITrayAnimationCoordinator _animationCoordinator;
+    private readonly IApplicationPaths _applicationPaths;
+    private readonly IApplicationFolderOpener _folderOpener;
     private readonly ILogger<SystemTrayService> _logger;
     private readonly FaultEpisodeTracker _faultEpisode = new();
     private int _taskbarCreatedMessage;
@@ -28,6 +32,8 @@ internal sealed class SystemTrayService : ISystemTrayService
         IInteractionModeToggleAction interactionToggleAction,
         IApplicationExitCoordinator exitCoordinator,
         ITrayAnimationCoordinator animationCoordinator,
+        IApplicationPaths applicationPaths,
+        IApplicationFolderOpener folderOpener,
         ILogger<SystemTrayService>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(adapter);
@@ -36,12 +42,16 @@ internal sealed class SystemTrayService : ISystemTrayService
         ArgumentNullException.ThrowIfNull(interactionToggleAction);
         ArgumentNullException.ThrowIfNull(exitCoordinator);
         ArgumentNullException.ThrowIfNull(animationCoordinator);
+        ArgumentNullException.ThrowIfNull(applicationPaths);
+        ArgumentNullException.ThrowIfNull(folderOpener);
         _adapter = adapter;
         _messageApi = messageApi;
         _visibilityCoordinator = visibilityCoordinator;
         _interactionToggleAction = interactionToggleAction;
         _exitCoordinator = exitCoordinator;
         _animationCoordinator = animationCoordinator;
+        _applicationPaths = applicationPaths;
+        _folderOpener = folderOpener;
         _logger = logger ??
             Microsoft.Extensions.Logging.Abstractions.NullLogger<SystemTrayService>.Instance;
     }
@@ -68,6 +78,7 @@ internal sealed class SystemTrayService : ISystemTrayService
         _visibilityCoordinator.StateChanged += OnVisibilityChanged;
         _interactionToggleAction.StateChanged += OnInteractionStateChanged;
         _animationCoordinator.DiagnosticChanged += OnAnimationDiagnosticChanged;
+        _adapter.OpenLogsDirectoryRequested += OnOpenLogsDirectoryRequested;
 
         try
         {
@@ -180,6 +191,21 @@ internal sealed class SystemTrayService : ISystemTrayService
 
     private void OnSettingsRequested() => SettingsRequested?.Invoke();
 
+    private void OnOpenLogsDirectoryRequested()
+    {
+        try
+        {
+            Directory.CreateDirectory(_applicationPaths.LogsDirectory);
+            _folderOpener.Open(_applicationPaths.LogsDirectory);
+            SetServiceError(null);
+        }
+        catch (Exception exception)
+        {
+            LogException("OpenLogsDirectory", exception);
+            SetServiceError("無法開啟記錄資料夾，請稍後再試。");
+        }
+    }
+
     private void OnVisibilityChanged(WindowVisibilityState state)
     {
         try
@@ -273,6 +299,7 @@ internal sealed class SystemTrayService : ISystemTrayService
         _visibilityCoordinator.StateChanged -= OnVisibilityChanged;
         _interactionToggleAction.StateChanged -= OnInteractionStateChanged;
         _animationCoordinator.DiagnosticChanged -= OnAnimationDiagnosticChanged;
+        _adapter.OpenLogsDirectoryRequested -= OnOpenLogsDirectoryRequested;
     }
 
     private void LogException(string operation, Exception exception)

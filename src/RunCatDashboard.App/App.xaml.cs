@@ -331,6 +331,7 @@ public partial class App : System.Windows.Application
             _ => new WindowVisibilityCoordinator());
         services.AddSingleton<IApplicationExitCoordinator>(
             _ => new ApplicationExitCoordinator());
+        services.AddSingleton<IApplicationFolderOpener, WindowsApplicationFolderOpener>();
         services.AddSingleton(provider => new ExplicitShutdownCoordinator(
             provider.GetRequiredService<IWindowVisibilityCoordinator>(),
             provider.GetRequiredService<ISettingsService>(),
@@ -374,6 +375,8 @@ public partial class App : System.Windows.Application
                 provider.GetRequiredService<IInteractionModeToggleAction>(),
                 provider.GetRequiredService<IApplicationExitCoordinator>(),
                 provider.GetRequiredService<ITrayAnimationCoordinator>(),
+                provider.GetRequiredService<IApplicationPaths>(),
+                provider.GetRequiredService<IApplicationFolderOpener>(),
                 provider.GetRequiredService<ILogger<SystemTrayService>>()));
         services.AddSingleton<IWindowWorkAreaProvider, Win32WindowWorkAreaProvider>();
         services.AddSingleton<IOverlayDisplayMonitor>(
