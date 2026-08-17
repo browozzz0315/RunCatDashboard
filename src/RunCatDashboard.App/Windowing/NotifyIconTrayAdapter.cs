@@ -10,6 +10,7 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
     private readonly Forms.ToolStripMenuItem _visibilityItem;
     private readonly Forms.ToolStripMenuItem _interactionItem;
     private readonly Forms.ToolStripMenuItem _animationItem;
+    private readonly Forms.ToolStripMenuItem _openLogsDirectoryItem;
     private readonly ITrayIconResource? _lightIconResource;
     private readonly ITrayIconResource? _darkIconResource;
     private readonly IReadOnlyList<ITrayIconResource> _lightAnimationIconResources =
@@ -35,6 +36,7 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
         _interactionItem = new Forms.ToolStripMenuItem();
         _animationItem = new Forms.ToolStripMenuItem();
         var settingsItem = new Forms.ToolStripMenuItem("設定...");
+        _openLogsDirectoryItem = new Forms.ToolStripMenuItem("開啟記錄資料夾");
         var exitItem = new Forms.ToolStripMenuItem("退出");
         _menu = new Forms.ContextMenuStrip();
         _menu.Items.AddRange([
@@ -43,6 +45,7 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
             _animationItem,
             new Forms.ToolStripSeparator(),
             settingsItem,
+            _openLogsDirectoryItem,
             new Forms.ToolStripSeparator(),
             exitItem
         ]);
@@ -144,6 +147,7 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
         _interactionItem.Click += OnInteractionItemClick;
         _animationItem.Click += OnAnimationItemClick;
         settingsItem.Click += OnSettingsItemClick;
+        _openLogsDirectoryItem.Click += OnOpenLogsDirectoryItemClick;
         exitItem.Click += OnExitItemClick;
     }
 
@@ -152,6 +156,7 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
     public event Action? InteractionToggleRequested;
     public event Action? AnimationToggleRequested;
     public event Action? SettingsRequested;
+    public event Action? OpenLogsDirectoryRequested;
     public event Action? ExitRequested;
 
     public bool CanUseAnimatedIcons => CurrentAnimationIconResources.Count > 0;
@@ -161,6 +166,8 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
     internal bool HasAssignedIcon => _notifyIcon.Icon is not null;
 
     internal System.Drawing.Icon? AssignedIcon => _notifyIcon.Icon;
+
+    internal string OpenLogsDirectoryMenuText => _openLogsDirectoryItem.Text ?? string.Empty;
 
     public void SetResolvedTheme(ResolvedTheme theme)
     {
@@ -264,6 +271,7 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
         InteractionToggleRequested = null;
         AnimationToggleRequested = null;
         SettingsRequested = null;
+        OpenLogsDirectoryRequested = null;
         ExitRequested = null;
     }
 
@@ -289,6 +297,9 @@ internal sealed class NotifyIconTrayAdapter : ITrayIconAdapter
 
     private void OnSettingsItemClick(object? sender, EventArgs e) =>
         SettingsRequested?.Invoke();
+
+    private void OnOpenLogsDirectoryItemClick(object? sender, EventArgs e) =>
+        OpenLogsDirectoryRequested?.Invoke();
 
     private void ThrowIfIconUnavailable()
     {

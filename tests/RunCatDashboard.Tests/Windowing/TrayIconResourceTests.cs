@@ -111,6 +111,32 @@ public sealed class TrayIconResourceTests
         adapter.Dispose();
     }
 
+    [Fact]
+    public void NotifyIcon_ProvidesOpenLogsDirectoryMenuItem()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var adapter = new NotifyIconTrayAdapter(
+                    new FakeTrayIconResourceLoader(new FakeTrayIconResource()),
+                    new FakeTrayAnimationIconResourceLoader([]));
+
+                Assert.Equal("開啟記錄資料夾", adapter.OpenLogsDirectoryMenuText);
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)));
+        Assert.Null(failure);
+    }
+
     private sealed class FakeTrayIconResourceLoader(ITrayIconResource resource)
         : ITrayIconResourceLoader
     {

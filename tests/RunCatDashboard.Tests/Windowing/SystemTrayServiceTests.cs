@@ -1,7 +1,11 @@
+using System.IO;
+using Microsoft.Extensions.Logging;
 using RunCatDashboard.App.Interop;
 using RunCatDashboard.App.Animation;
+using RunCatDashboard.App.Services;
 using RunCatDashboard.App.Windowing;
 using RunCatDashboard.App.Theming;
+using RunCatDashboard.Tests.Diagnostics;
 
 namespace RunCatDashboard.Tests.Windowing;
 
@@ -110,6 +114,72 @@ public sealed class SystemTrayServiceTests
     }
 
     [Fact]
+    public void OpenLogsDirectory_CreatesCanonicalDirectoryAndOpensIt()
+    {
+        using var fixture = new TrayFixture();
+        fixture.Service.Initialize();
+
+        fixture.Adapter.FireOpenLogsDirectory();
+
+        Assert.True(Directory.Exists(fixture.Paths.LogsDirectory));
+        Assert.Equal(fixture.Paths.LogsDirectory, fixture.FolderOpener.OpenedPath);
+        Assert.Null(fixture.Service.LastError);
+    }
+
+    [Fact]
+    public void OpenLogsDirectory_WhenDirectoryCreationFails_LogsFailureWithoutThrowing()
+    {
+        using var fixture = new TrayFixture();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.Paths.DataDirectory)!);
+        File.WriteAllText(fixture.Paths.DataDirectory, "blocks directory creation");
+        fixture.Service.Initialize();
+
+        Exception? exception = Record.Exception(fixture.Adapter.FireOpenLogsDirectory);
+
+        Assert.Null(exception);
+        Assert.Null(fixture.FolderOpener.OpenedPath);
+        Assert.Contains("無法開啟記錄資料夾", fixture.Service.LastError);
+        Assert.Contains(
+            fixture.Logger.Entries,
+            entry => entry.Level == LogLevel.Error &&
+                entry.Properties.TryGetValue("Operation", out object? operation) &&
+                Equals(operation, "OpenLogsDirectory"));
+    }
+
+    [Fact]
+    public void OpenLogsDirectory_WhenOpeningFails_LogsFailureWithoutThrowing()
+    {
+        using var fixture = new TrayFixture();
+        fixture.FolderOpener.OpenException = new InvalidOperationException(
+            "configured folder opener failure");
+        fixture.Service.Initialize();
+
+        Exception? exception = Record.Exception(fixture.Adapter.FireOpenLogsDirectory);
+
+        Assert.Null(exception);
+        Assert.True(Directory.Exists(fixture.Paths.LogsDirectory));
+        Assert.Contains("無法開啟記錄資料夾", fixture.Service.LastError);
+        Assert.Contains(
+            fixture.Logger.Entries,
+            entry => entry.Level == LogLevel.Error &&
+                entry.Properties.TryGetValue("Operation", out object? operation) &&
+                Equals(operation, "OpenLogsDirectory"));
+    }
+
+    [Fact]
+    public void Dispose_UnsubscribesOpenLogsDirectoryHandler()
+    {
+        using var fixture = new TrayFixture();
+        fixture.Service.Initialize();
+        fixture.Service.Dispose();
+
+        fixture.Adapter.FireOpenLogsDirectory();
+
+        Assert.Equal(0, fixture.Adapter.OpenLogsDirectorySubscriberCount);
+        Assert.Null(fixture.FolderOpener.OpenedPath);
+    }
+
+    [Fact]
     public void TaskbarCreated_WhenRepeated_RecoversSameAdapterIdempotently()
     {
         var fixture = new TrayFixture();
@@ -181,10 +251,15 @@ public sealed class SystemTrayServiceTests
         Assert.Equal(1, fixture.Adapter.DisposeCount);
     }
 
-    private sealed class TrayFixture
+    private sealed class TrayFixture : IDisposable
     {
         internal FakeTrayIconAdapter Adapter { get; } = new();
         internal FakeMessageApi MessageApi { get; } = new();
+        internal ApplicationPaths Paths { get; } = new(
+            Path.Combine(Path.GetTempPath(), $"RunCatDashboard.TrayTests.{Guid.NewGuid():N}"),
+            windowsSessionId: 42);
+        internal FakeApplicationFolderOpener FolderOpener { get; } = new();
+        internal RecordingLogger<SystemTrayService> Logger { get; } = new();
         internal WindowVisibilityCoordinator Visibility { get; } = new();
         internal FakeInteractionModeToggleAction InteractionAction { get; } = new();
         internal ApplicationExitCoordinator Exit { get; } = new();
@@ -203,7 +278,23 @@ public sealed class SystemTrayServiceTests
                 Visibility,
                 InteractionAction,
                 Exit,
-                AnimationCoordinator);
+                AnimationCoordinator,
+                Paths,
+                FolderOpener,
+                Logger);
+        }
+
+        public void Dispose()
+        {
+            Service.Dispose();
+            if (File.Exists(Paths.DataDirectory))
+            {
+                File.Delete(Paths.DataDirectory);
+            }
+            else if (Directory.Exists(Paths.DataDirectory))
+            {
+                Directory.Delete(Paths.DataDirectory, recursive: true);
+            }
         }
     }
 
@@ -240,6 +331,7 @@ public sealed class SystemTrayServiceTests
         public event Action? InteractionToggleRequested;
         public event Action? AnimationToggleRequested;
         public event Action? SettingsRequested;
+        public event Action? OpenLogsDirectoryRequested;
         public event Action? ExitRequested;
         public bool CanUseAnimatedIcons { get; set; } = true;
         public string? AnimationIconLoadError { get; set; }
@@ -254,6 +346,8 @@ public sealed class SystemTrayServiceTests
         internal int DisposeCount { get; private set; }
         internal Exception? RecoveryException { get; set; }
         internal Exception? ShowException { get; set; }
+        internal int OpenLogsDirectorySubscriberCount =>
+            OpenLogsDirectoryRequested?.GetInvocationList().Length ?? 0;
         internal int DoubleClickSubscriberCount => DoubleClicked?.GetInvocationList().Length ?? 0;
 
         public void Show()
@@ -287,7 +381,23 @@ public sealed class SystemTrayServiceTests
         internal void FireInteractionToggle() => InteractionToggleRequested?.Invoke();
         internal void FireAnimationToggle() => AnimationToggleRequested?.Invoke();
         internal void FireSettings() => SettingsRequested?.Invoke();
+        internal void FireOpenLogsDirectory() => OpenLogsDirectoryRequested?.Invoke();
         internal void FireExit() => ExitRequested?.Invoke();
+    }
+
+    private sealed class FakeApplicationFolderOpener : IApplicationFolderOpener
+    {
+        internal string? OpenedPath { get; private set; }
+        internal Exception? OpenException { get; set; }
+
+        public void Open(string directoryPath)
+        {
+            OpenedPath = directoryPath;
+            if (OpenException is not null)
+            {
+                throw OpenException;
+            }
+        }
     }
 
     private sealed class FakeRunCatAnimationController : IRunCatAnimationController

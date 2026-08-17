@@ -35,8 +35,9 @@ set 載入失敗時使用已驗證的 static icon 並保留診斷。只有 stati
 3. `停用系統匣動畫（改用靜態圖示）` 或 `啟用系統匣動畫`。
 4. 分隔線。
 5. `設定...`。
-6. 分隔線。
-7. `退出`。
+6. `開啟記錄資料夾`。
+7. 分隔線。
+8. `退出`。
 
 文字代表下一個動作。左鍵單擊不處理；左鍵雙擊與第一個選單項目都透過
 同一 visibility coordinator 切換 user-requested visibility。互動模式選單
@@ -48,6 +49,10 @@ action 經 WPF Dispatcher 呼叫既有 `OverlayModeCoordinator`，不在 tray se
 「設定...」發布 `SettingsRequested`，由 WPF lifecycle 的單一 Settings Window
 service 處理；Dashboard hidden 時仍可開啟。重複要求只 restore/Activate 現有視窗，
 Settings Window 關閉不會觸發 App exit。
+
+「開啟記錄資料夾」使用 `IApplicationPaths.LogsDirectory`。開啟前會以
+`Directory.CreateDirectory` 確保資料夾存在；建立或開啟失敗會記錄 structured
+diagnostic，保留 tray 與 App 執行。
 
 系統匣動畫模式每次啟動預設為 animated。第三個選單項目只切換本次 process
 中的 tray presentation；不寫入設定、不新增 Dashboard 設定 UI，重新啟動後
@@ -147,6 +152,7 @@ timer。重複訊息安全，恢復失敗會保留上一個有效 icon，並將 
 
 - tray icon 動畫流暢度、與 Dashboard 同幀及 CPU 速度同步、右鍵順序與文字，
   以及左鍵單擊無作用、雙擊切換。
+- `開啟記錄資料夾` 可開啟 `%LocalAppData%\RunCatDashboard\Logs`。
 - animated/static 可反覆切換；重新啟動回到 animated，且不建立設定檔變更。
 - Window Close 只隱藏；tray `退出` 才結束程序，且圖示不殘留。
 - 兩組自訂快捷鍵在一般桌面各自切換正確用途，按住時 `MOD_NOREPEAT` 生效。
