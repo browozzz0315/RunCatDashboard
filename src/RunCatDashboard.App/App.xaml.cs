@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Reflection;
@@ -41,6 +42,25 @@ public partial class App : System.Windows.Application
         ArgumentNullException.ThrowIfNull(instanceGuard);
         _instanceGuard = instanceGuard;
         _startupCoordinator = new ApplicationStartupCoordinator(instanceGuard);
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+    }
+
+    private void OnDispatcherUnhandledException(
+        object? sender,
+        DispatcherUnhandledExceptionEventArgs e)
+    {
+        try
+        {
+            UnhandledUiExceptionBoundary.Handle(
+                e.Exception,
+                _lifecycleLogger,
+                _loggingRuntime);
+        }
+        catch
+        {
+            // The final fatal logging boundary must never alter the original
+            // Dispatcher exception lifecycle.
+        }
     }
 
     protected override void OnStartup(StartupEventArgs e)
