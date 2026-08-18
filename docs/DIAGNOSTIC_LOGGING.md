@@ -87,6 +87,19 @@ File logger 建立失敗時改用 `NullLoggerFactory`，App 核心功能盡可�
 獨立 one-shot self-diagnostic 發布，不用失敗 logger 記錄自身錯誤、不遞迴，也不反覆
 顯示 UI。真正 startup failure 仍記 `Critical` 並保留使用者提示。
 
+`App` 在早期 lifecycle 註冊 `Application.DispatcherUnhandledException` 作為 WPF UI
+thread 的 final logging boundary。若 application logger 可用，boundary 以 `Critical`
+記錄原始 exception object，並以 `Operation=DispatcherUnhandledException` 與
+`Subsystem=WpfDispatcher` 作為最小 structured context。既有 NLog exception format
+保留 exception type、message 與 stack trace。
+
+Logger 尚未初始化、已不可用、logging 或 flush 失敗時，boundary 只做一次獨立的
+best-effort `Trace.WriteLine` fallback；fallback failure 也不得離開 handler。此 boundary
+不顯示 UI、不解析 DI、不呼叫 `Application.Shutdown()`，也不設定
+`DispatcherUnhandledExceptionEventArgs.Handled = true`。Fatal exception 會被記錄，但不
+會因此被 swallowed；`Handled` 保持未變更，原本的 WPF 未處理 exception 與 process
+termination lifecycle 繼續生效。
+
 Explicit shutdown 順序固定為：BeginExit、擷取位置、flush settings、關閉 Settings
 Window、關閉 MainWindow及其 hotkey／tray／native lifecycle、最多 2 秒 logging
 flush、`Application.Shutdown()`。`OnExit` 再冪等 final flush／dispose。Logging failure
